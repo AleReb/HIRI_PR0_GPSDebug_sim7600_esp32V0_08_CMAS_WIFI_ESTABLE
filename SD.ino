@@ -63,3 +63,40 @@ bool saveCSVData() {
   }
   return false;
 }
+
+// -------------------- Failed Transmission Log (Debug only) --------------------
+// Esta función guarda las transmisiones HTTP fallidas para análisis posterior
+// NO se reintenta la transmisión automáticamente para evitar desfase de datos
+// Variables globales ajustables para pruebas:
+// - failedTxPath: Ruta del archivo CSV (definido en .ino principal)
+void saveFailedTransmission(const String& url, const String& errorType) {
+  if (!SDOK) return;  // SD no disponible
+
+  DateTime now = rtc.now();
+  char timestamp[20];
+  snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d",
+           now.year(), now.month(), now.day(),
+           now.hour(), now.minute(), now.second());
+
+  // Verificar si necesitamos crear el header (primera vez)
+  bool needsHeader = !SD.exists(failedTxPath.c_str());
+
+  File f = SD.open(failedTxPath.c_str(), FILE_APPEND);
+  if (f) {
+    // Escribir header si es la primera línea
+    if (needsHeader) {
+      f.println("timestamp,error_type,url");
+      Serial.println("[FAILED_TX] Created header in " + failedTxPath);
+    }
+
+    // Escribir línea de fallo
+    // Formato: timestamp,error_type,url (URL entre comillas por si tiene comas)
+    String line = String(timestamp) + "," + errorType + ",\"" + url + "\"";
+    f.println(line);
+    f.close();
+
+    Serial.println("[FAILED_TX] Logged: " + errorType);
+  } else {
+    Serial.println("[FAILED_TX][ERR] Could not open " + failedTxPath);
+  }
+}

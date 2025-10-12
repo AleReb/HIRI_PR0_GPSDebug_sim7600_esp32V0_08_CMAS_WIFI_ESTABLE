@@ -1,27 +1,74 @@
 // -------------------- HTTP helpers --------------------
+// Variables globales para control de reconexión PDP (ajustables para pruebas)
+static uint8_t pdpReconnectFailCount = 0;          // Contador de fallos consecutivos
+static uint32_t lastPdpReconnectAttempt = 0;      // Timestamp del último intento
+const uint8_t MAX_PDP_FAILS_BEFORE_BACKOFF = 5;   // Máximo de fallos antes de activar backoff
+const uint32_t PDP_BACKOFF_MS = 15000;             // Tiempo de espera después de N fallos (15s)
+const uint32_t PDP_RECONNECT_TIMEOUT_MS = 30000;  // Timeout por intento de reconexión (30s)
+
 bool ensurePdpAndNet() {
   String dummy;
   (void)sendAtSync("+CGDCONT=1,\"IP\",\"gigsky-02\"", dummy, 2000);
 
   if (!modem.isGprsConnected()) {
-    Serial.println("[NET] PDP down, reconnecting...");
-    if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
-      Serial.println("[NET] PDP reconnect FAIL");
-      return false;
-      hasRed = false;
+    // PROTECCIÓN CONTRA BLOQUEOS: Si hemos fallado muchas veces, esperar antes de reintentar
+    // Esto evita bloqueos cuando se viaja entre redes celulares o en zonas sin cobertura
+    if (pdpReconnectFailCount >= MAX_PDP_FAILS_BEFORE_BACKOFF) {
+      uint32_t timeSinceLastAttempt = millis() - lastPdpReconnectAttempt;
+      if (timeSinceLastAttempt < PDP_BACKOFF_MS) {
+        uint32_t remainingBackoff = PDP_BACKOFF_MS - timeSinceLastAttempt;
+        Serial.printf("[NET] Too many failures (%d), waiting %lu ms before retry\n",
+                      pdpReconnectFailCount, remainingBackoff);
+        return false;
+      } else {
+        // Han pasado 15s, resetear contador y reintentar
+        Serial.println("[NET] Backoff period over, resetting fail counter");
+        pdpReconnectFailCount = 0;
+      }
     }
+
+    Serial.println("[NET] PDP down, reconnecting...");
+    lastPdpReconnectAttempt = millis();
+
+    // MINI-LOOP CON WATCHDOG RESET: modem.gprsConnect() puede bloquear 10-60s
+    // Alimentamos el watchdog cada 1s para evitar reset del ESP32
+    uint32_t reconStart = millis();
+    bool reconOk = false;
+    while (millis() - reconStart < PDP_RECONNECT_TIMEOUT_MS) {
+      esp_task_wdt_reset();  // Evitar watchdog timeout cada 1s
+
+      if (modem.gprsConnect(apn, gprsUser, gprsPass)) {
+        reconOk = true;
+        break;
+      }
+
+      delay(1000);  // Esperar 1s entre intentos internos
+    }
+
+    if (!reconOk) {
+      pdpReconnectFailCount++;
+      Serial.printf("[NET] PDP reconnect FAIL after %lu ms (fail count: %d/%d)\n",
+                    PDP_RECONNECT_TIMEOUT_MS, pdpReconnectFailCount, MAX_PDP_FAILS_BEFORE_BACKOFF);
+      hasRed = false;
+      return false;
+    }
+
+    // Éxito: resetear contador de fallos
+    pdpReconnectFailCount = 0;
+    hasRed = true;
+    Serial.println("[NET] PDP reconnected OK");
   }
 
   String r;
   if (!sendAtSync("+NETOPEN?", r, 2000) || r.indexOf("+NETOPEN: 1") < 0) {
     if (!sendAtSync("+NETOPEN", r, 10000)) {
       Serial.println("[NET] NETOPEN FAIL");
-      return false;
       hasRed = false;
+      return false;
     }
   }
-  return true;
   hasRed = true;
+  return true;
 }
 
 // Helper: parsear +HTTPACTION: 0,200,123
@@ -83,8 +130,9 @@ bool httpGet_webhook(const String& fullUrl) {
   {
     bool actionDone = false, actionOk = false;
     uint32_t startTime = millis();
-    // Timeout ADAPTATIVO basado en batería: 10s si batería baja, 2.5s normal
-    const uint32_t MAX_HTTP_WAIT_MS = (batV < 3.6) ? 10000 : 2500;
+    // Timeout HTTP: 15s permite ~5 lecturas de PMS/GPS (3s cada una) antes de abortar
+    // Ajustable para pruebas: reducir si red es muy rápida, aumentar si red es muy lenta
+    const uint32_t MAX_HTTP_WAIT_MS = 15000;  // 15 segundos
 
     while (!actionDone) {
       esp_task_wdt_reset();  // Reset watchdog para evitar timeout durante HTTP

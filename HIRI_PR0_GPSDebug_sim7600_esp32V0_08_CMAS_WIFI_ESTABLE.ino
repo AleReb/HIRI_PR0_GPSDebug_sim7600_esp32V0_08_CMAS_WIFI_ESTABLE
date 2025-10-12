@@ -121,6 +121,7 @@ bool SDOK = false;
 bool loggingEnabled = false;
 String csvFileName = "";
 String logFilePath = "/errors.csv";  // Error log file
+String failedTxPath = "/failed_tx.csv";  // Failed transmissions log (debug only, no retries)
 String deviceID = "/HIRIP";  // nombre base de archivo (legacy, no se usa)
 static uint8_t lastDayLogged = 0;  // Para detectar cambio de día
 const int SD_SCLK = 14, SD_MISO = 2, SD_MOSI = 15, SD_CS = 13;
@@ -920,7 +921,7 @@ if (SHT31OK == true) {
 
     Serial.println("[HTTP] GET " + url);
 
-    // Modo SYNC: Transmisión HTTP bloqueante
+    // Modo SYNC: Transmisión HTTP bloqueante (con timeout de 15s y watchdog reset)
     isCurrentlyTransmitting = true;  // Activar bandera
     bool ok = httpGet_webhook(url);
     isCurrentlyTransmitting = false;  // Desactivar bandera
@@ -932,8 +933,16 @@ if (SHT31OK == true) {
       prefs.begin("system", false);
       prefs.putUInt("sendCnt", sendCounter);
       prefs.end();
+    } else {
+      // TRANSMISIÓN FALLIDA: Guardar en CSV de fallos para análisis (NO se reintenta)
+      // Esto permite debuggear problemas de red sin perder registro de intentos fallidos
+      saveFailedTransmission(url, lastSendState == 2 ? "HTTP_FAIL" : "TIMEOUT");
+      Serial.println("[HTTP] Transmission failed, logged to /failed_tx.csv");
     }
 
+    // IMPORTANTE: Guardar datos en CSV principal SIEMPRE (independiente de si HTTP tuvo éxito)
+    // Esto garantiza que los datos de sensores/GPS se almacenen localmente incluso si falla la transmisión
+    // Prioridad: Leer sensores > Guardar SD > Transmitir HTTP
     saveCSVData();
   }
 
