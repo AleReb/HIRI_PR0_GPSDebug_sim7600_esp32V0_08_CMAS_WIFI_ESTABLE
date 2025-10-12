@@ -623,9 +623,14 @@ void handleButtons() {
       prefs.putBool("streaming", false);
       prefs.end();
     } else {
-      // START
+      // START (inicio manual por usuario)
       streaming = true;
       lastStream = 0;
+
+      // RESETEAR sendCounter cuando el usuario presiona START manualmente
+      // Solo debe continuar desde el último valor si fue reinicio por watchdog
+      sendCounter = 0;
+      Serial.println("[STREAM] Resetting sendCounter to 0 (manual START)");
 
       if (!SDOK) {
         spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
@@ -644,9 +649,10 @@ void handleButtons() {
       }
       loggingEnabled = SDOK;
 
-      // Persist streaming state
+      // Persist streaming state y resetear sendCounter en flash
       prefs.begin("system", false);
       prefs.putBool("streaming", true);
+      prefs.putUInt("sendCnt", 0);  // Guardar 0 en flash para inicio manual
       prefs.end();
 
       Serial.println(String("[STREAM] START + SD logging ") + (loggingEnabled ? "ON" : "OFF"));
