@@ -1244,7 +1244,7 @@ if (SHT31OK == true) {
     } else {
       // TRANSMISIÓN FALLIDA: Guardar en CSV de fallos para análisis (NO se reintenta)
       // Esto permite debuggear problemas de red sin perder registro de intentos fallidos
-      saveFailedTransmission(url, lastSendState == 2 ? "HTTP_FAIL" : "TIMEOUT");
+      saveFailedTransmission(url, "HTTP_FAIL");
       Serial.println("[HTTP] ✗ Transmission failed, logged to " + failedTxPath);
     }
   }
