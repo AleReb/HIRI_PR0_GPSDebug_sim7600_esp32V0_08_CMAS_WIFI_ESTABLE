@@ -102,61 +102,91 @@ void syncRtcSmart() {
   prefs.end();
   Serial.printf("[RTC] Modem sync count: %u/%u\n", rtcModemSyncCount, MAX_MODEM_SYNC_COUNT);
 
-  // 1) baseline: compile-time
-  uint32_t ctEpoch = compileUnixTime();
+  // Obtener hora actual del RTC
   DateTime rtcNow = rtc.now();
   uint32_t rtcEpoch = rtcNow.unixtime();
 
-  // Si perdió potencia o está fuera de rango
-  if (rtc.lostPower() || rtcEpoch < MIN_VALID_EPOCH || rtcEpoch > (ctEpoch + MAX_FUTURE_DRIFT)) {
+  // Solo usar compile time si RTC perdió potencia o tiene hora inválida
+  if (rtc.lostPower() || rtcEpoch < MIN_VALID_EPOCH) {
+    uint32_t ctEpoch = compileUnixTime();
     rtc.adjust(DateTime(ctEpoch));
-    rtcEpoch = ctEpoch;
-    Serial.println("[RTC] Baseline -> compile time (lost power / invalid / far future)");
+    Serial.println("[RTC] Initialized with compile time (lost power or invalid)");
+    Serial.printf("[RTC] Compile time: %lu\n", (unsigned long)ctEpoch);
+  } else {
+    Serial.printf("[RTC] Current time: %04d-%02d-%02d %02d:%02d:%02d (epoch=%lu)\n",
+                  rtcNow.year(), rtcNow.month(), rtcNow.day(),
+                  rtcNow.hour(), rtcNow.minute(), rtcNow.second(),
+                  (unsigned long)rtcEpoch);
   }
 
-  // Ventana de tolerancia ±1 hora (3600s)
-  long drift = (long)rtcEpoch - (long)ctEpoch;
-  if (abs(drift) > 3600) {
-    Serial.printf("[RTC] Drift detected: %ld s, adjusting to compile time\n", drift);
-    rtc.adjust(DateTime(ctEpoch));
-    rtcEpoch = ctEpoch;
-  }
-
-  // 2) intentar modem ahora (solo si no alcanzó límite)
+  // Intentar sincronizar con modem (solo si no alcanzó límite)
   if (rtcModemSyncCount < MAX_MODEM_SYNC_COUNT) {
-    (void)atRun("+CTZU=1", "OK", "ERROR", 1000);
-    (void)atRun("+CTZR=1", "OK", "ERROR", 1000);
-
-    uint32_t modemEpoch = 0;
-    bool haveModem = getModemEpoch(modemEpoch);
-
-    if (haveModem) {
-      long diff = (long)modemEpoch - (long)rtcEpoch;
-      Serial.printf("[RTC] rtc=%lu modem=%lu diff=%ld s\n",
-                    (unsigned long)rtcEpoch, (unsigned long)modemEpoch, diff);
-
-      if (abs(diff) > RTC_SYNC_THRESHOLD) {
-        rtc.adjust(DateTime(modemEpoch));
-        Serial.println("[RTC] Synchronized to modem clock");
-
-        // Incrementar contador
-        rtcModemSyncCount++;
-        prefs.begin("rtc", false);
-        prefs.putUChar("syncCnt", rtcModemSyncCount);
-        prefs.end();
-        Serial.printf("[RTC] Sync count updated: %u/%u\n", rtcModemSyncCount, MAX_MODEM_SYNC_COUNT);
-      } else {
-        Serial.println("[RTC] Within threshold; no sync");
-      }
-      rtcNetSyncPending = false;
-    } else {
-      // modem aún no listo: reintenta en loop
-      rtcNetSyncPending = true;
-      rtcNextProbeMs = millis() + RTC_PROBE_PERIOD_MS;
-      Serial.println("[RTC] Modem time not ready; will retry in loop");
-    }
+    syncRtcFromModem();
   } else {
     Serial.println("[RTC] Max modem sync count reached, skipping network sync");
     rtcNetSyncPending = false;
+  }
+}
+
+// -------------------- Reset Modem Sync Counter --------------------
+// Resetea el contador de sincronizaciones con el modem
+// Útil si quieres forzar nuevas sincronizaciones después de alcanzar el límite
+void resetModemSyncCounter() {
+  rtcModemSyncCount = 0;
+  prefs.begin("rtc", false);
+  prefs.putUChar("syncCnt", 0);
+  prefs.end();
+  Serial.println("[RTC] Modem sync counter reset to 0");
+}
+
+// -------------------- Sync from Modem (llamable manualmente) --------------------
+// Esta función sincroniza el RTC con la hora del modem celular
+// Puede ser llamada manualmente o desde syncRtcSmart()
+// Retorna true si la sincronización fue exitosa
+bool syncRtcFromModem() {
+  if (!rtcOK) {
+    Serial.println("[RTC] Cannot sync: RTC not available");
+    return false;
+  }
+
+  // Habilitar actualización automática de zona horaria
+  (void)atRun("+CTZU=1", "OK", "ERROR", 1000);
+  (void)atRun("+CTZR=1", "OK", "ERROR", 1000);
+
+  uint32_t modemEpoch = 0;
+  bool haveModem = getModemEpoch(modemEpoch);
+
+  if (!haveModem) {
+    Serial.println("[RTC] Modem time not ready; will retry in loop");
+    rtcNetSyncPending = true;
+    rtcNextProbeMs = millis() + RTC_PROBE_PERIOD_MS;
+    return false;
+  }
+
+  // Comparar con RTC actual
+  uint32_t rtcEpoch = rtc.now().unixtime();
+  long diff = (long)modemEpoch - (long)rtcEpoch;
+
+  Serial.printf("[RTC] rtc=%lu modem=%lu diff=%ld s\n",
+                (unsigned long)rtcEpoch, (unsigned long)modemEpoch, diff);
+
+  // Solo sincronizar si la diferencia supera el umbral
+  if (abs(diff) > RTC_SYNC_THRESHOLD) {
+    rtc.adjust(DateTime(modemEpoch));
+    Serial.println("[RTC] Synchronized to modem clock");
+
+    // Incrementar y guardar contador
+    rtcModemSyncCount++;
+    prefs.begin("rtc", false);
+    prefs.putUChar("syncCnt", rtcModemSyncCount);
+    prefs.end();
+    Serial.printf("[RTC] Sync count updated: %u/%u\n", rtcModemSyncCount, MAX_MODEM_SYNC_COUNT);
+
+    rtcNetSyncPending = false;
+    return true;
+  } else {
+    Serial.println("[RTC] Within threshold; no sync needed");
+    rtcNetSyncPending = false;
+    return false;
   }
 }
