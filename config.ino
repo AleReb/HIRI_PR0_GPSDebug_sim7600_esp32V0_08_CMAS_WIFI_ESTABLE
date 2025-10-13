@@ -1,26 +1,7 @@
 // -------------------- Configuration System --------------------
 // Sistema de configuración persistente en flash (Preferences)
-// Configuración accesible por comandos seriales y (futuro) interfaz web
-
-struct SystemConfig {
-  // ===== SD Card =====
-  bool sdAutoMount;           // Montar SD en boot (default: false)
-  uint32_t sdSavePeriod;      // Período guardado SD en ms: 3000, 60000, 600000, 1200000 (default: 3000)
-
-  // ===== HTTP Transmission =====
-  uint32_t httpSendPeriod;    // Período transmisión en ms: 3000, 60000, 600000, 1200000 (default: 3000)
-  uint16_t httpTimeout;       // Timeout HTTP en segundos: 5-30 (default: 15)
-
-  // ===== Display OLED =====
-  bool oledAutoOff;           // Apagar OLED automáticamente (default: false = siempre encendida)
-  uint32_t oledTimeout;       // Timeout en ms: 60000, 120000, 180000 (default: 120000 = 2min)
-
-  // ===== Power Management =====
-  bool ledEnabled;            // NeoPixel habilitado (default: true)
-  uint8_t ledBrightness;      // Brillo LED: 10, 25, 50, 100 (default: 50%)
-};
-
-SystemConfig config;
+// Configuración accesible por comandos seriales
+// NOTA: struct SystemConfig y variable config están declaradas en el archivo principal
 
 // -------------------- Load Configuration --------------------
 void loadConfig() {

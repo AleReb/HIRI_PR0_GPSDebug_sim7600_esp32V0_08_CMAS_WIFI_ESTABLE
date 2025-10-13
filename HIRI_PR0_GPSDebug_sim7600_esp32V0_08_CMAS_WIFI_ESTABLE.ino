@@ -374,6 +374,37 @@ const int HIRI_FINAL_Y = 44;  // Posición final Y de HIRI
 const int PRO_FINAL_Y = 52;   // Posición final Y de PRO (ajústalo aquí)
 // -------------------- OLED Auto-Off --------------------
 static uint32_t lastOledActivity = 0;  // Timer for OLED auto-off
+
+// -------------------- Configuration System --------------------
+struct SystemConfig {
+  // SD Card
+  bool sdAutoMount;           // Montar SD en boot (default: false)
+  uint32_t sdSavePeriod;      // Período guardado SD en ms (default: 3000)
+
+  // HTTP Transmission
+  uint32_t httpSendPeriod;    // Período transmisión en ms (default: 3000)
+  uint16_t httpTimeout;       // Timeout HTTP en segundos (default: 15)
+
+  // Display OLED
+  bool oledAutoOff;           // Apagar OLED automáticamente (default: false)
+  uint32_t oledTimeout;       // Timeout en ms (default: 120000 = 2min)
+
+  // Power Management
+  bool ledEnabled;            // NeoPixel habilitado (default: true)
+  uint8_t ledBrightness;      // Brillo LED: 10, 25, 50, 100 (default: 50%)
+};
+
+SystemConfig config;
+
+// Forward declarations for config functions
+void loadConfig();
+void saveConfig();
+void configSetDefaults();
+void printConfig();
+void printSDInfo();
+void printSDFileList();
+void applyLEDConfig();
+
 // -------------------- GNSS variables --------------------
 uint32_t gnssStartMs = 0;
 bool haveFix = false;
