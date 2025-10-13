@@ -18,7 +18,7 @@
 #include <Preferences.h>
 
 // -------------------- VERSION --------------------
-String VERSION = "0.3.9.2";  // HTTP robustness + SD save counter display
+String VERSION = "0.3.9.3";  // HTTP robustness + SD save counter display
 
 #define TINY_GSM_MODEM_SIM7600
 #define TINY_GSM_RX_BUFFER 4096  // Increased from 2048 for better stability
@@ -372,6 +372,8 @@ const int HIRI_FINAL_X = 48;  // Posición final X de HIRI
 const int PRO_FINAL_X = 106;  // Posición final X de PRO (ajústalo aquí)
 const int HIRI_FINAL_Y = 44;  // Posición final Y de HIRI
 const int PRO_FINAL_Y = 52;   // Posición final Y de PRO (ajústalo aquí)
+// -------------------- OLED Auto-Off --------------------
+static uint32_t lastOledActivity = 0;  // Timer for OLED auto-off
 // -------------------- GNSS variables --------------------
 uint32_t gnssStartMs = 0;
 bool haveFix = false;
@@ -499,7 +501,39 @@ void setup() {
   Serial.println("[BOOT] SIM7600 GNSS+PMS (robust, async debug, SD-on-start)");
   Serial.println("[BOOT] FW VERSION: " + VERSION);
 
+  // -------- Load Configuration --------
+  loadConfig();
+  applyLEDConfig();  // Apply LED brightness/enable settings
 
+  // -------- SD Auto-Mount (if enabled) --------
+  if (config.sdAutoMount && !SDOK) {
+    Serial.println("[SD] Auto-mount enabled, trying to mount...");
+    spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
+    SDOK = SD.begin(SD_CS, spiSD);
+
+    if (SDOK) {
+      Serial.println("[SD] ✓ Mounted successfully");
+      printSDInfo();      // Show card size, usage
+      printSDFileList();  // Show all files
+
+      // Create error log headers if needed
+      writeErrorLogHeader();
+
+      // If no CSV file exists yet, create one
+      if (csvFileName.length() == 0) {
+        csvFileName = generateCSVFileName();
+        writeCSVHeader();
+        prefs.begin("system", false);
+        prefs.putString("csvFile", csvFileName);
+        prefs.end();
+        Serial.println("[SD] Created initial CSV file: " + csvFileName);
+      }
+    } else {
+      Serial.println("[SD] ✗ Mount failed (check hardware/wiring)");
+    }
+  } else if (!config.sdAutoMount) {
+    Serial.println("[SD] Auto-mount disabled (will mount on START button or streaming)");
+  }
 
   // Generar SSID dinámico basado en DEVICE_ID_STR
   AP_SSID_STR = "HIRIPRO_" + String(DEVICE_ID_STR);
@@ -508,6 +542,9 @@ void setup() {
   u8g2.begin();
   u8g2.setDisplayRotation(U8G2_R2);
   u8g2.setFont(u8g2_font_5x7_tf);
+
+  // Initialize OLED activity timer
+  lastOledActivity = millis();
 
   pixels.begin();
   pixels.setPixelColor(0, pixels.Color(0, 50, 100));
@@ -649,6 +686,10 @@ void handleButtons() {
   // --- BTN1: toggle START/STOP ---
   if (btn1Flag) {
     btn1Flag = false;  // consumir evento (ya quedó desarmado en la ISR)
+    lastOledActivity = millis();  // Reset OLED timer on button press
+    if (config.oledAutoOff) {
+      u8g2.setPowerSave(0);  // Wake up display if it was off
+    }
 
     if (streaming) {
       // STOP
@@ -715,6 +756,10 @@ void handleButtons() {
   // --- BTN2: alterna WiFi AP ---
   if (btn2Flag) {
     btn2Flag = false;  // consumir evento (ya quedó desarmado en la ISR)
+    lastOledActivity = millis();  // Reset OLED timer on button press
+    if (config.oledAutoOff) {
+      u8g2.setPowerSave(0);  // Wake up display if it was off
+    }
 
     if (!wifiModeActive) {
       if (streaming) {
@@ -931,8 +976,10 @@ void loop() {
   }
 
   // -------- Periodic streaming to API --------
-  if (streaming && (millis() - lastStream >= STREAM_PERIOD_MS)) {
+  // Use config period instead of hardcoded STREAM_PERIOD_MS
+  if (streaming && (millis() - lastStream >= config.httpSendPeriod)) {
     lastStream = millis();
+    lastOledActivity = millis();  // Reset OLED timer on transmission activity
 
     // valores mapping (v1 sin sanitizar, a pedido)
     const String v1 = isnan(pmsTempC) ? "0" : safeFloatStr(pmsTempC);// Temp PMS (o 0/NaN según sensor)
@@ -1039,6 +1086,13 @@ if (SHT31OK == true) {
   // Formato: sdSaveCounter/sendCounter (intentos SD / exitosos HTTP)
   u8g2.print(" " + String(sdSaveCounter) + "/" + String(sendCounter) + " ID" + String(DEVICE_ID_STR));
   u8g2.sendBuffer();
+
+  // -------- OLED Auto-Off Logic --------
+  if (config.oledAutoOff) {
+    if (millis() - lastOledActivity > config.oledTimeout) {
+      u8g2.setPowerSave(1);  // Turn off display after timeout
+    }
+  }
 
   // -------- Serial Commands --------
   processSerialCommand();

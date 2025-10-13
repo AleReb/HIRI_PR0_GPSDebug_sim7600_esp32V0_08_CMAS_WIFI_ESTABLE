@@ -46,6 +46,20 @@ void processSerialCommand() {
     Serial.println(F("  start       - Start streaming"));
     Serial.println(F("  stop        - Stop streaming"));
 
+    Serial.println(F("\n[Configuration]"));
+    Serial.println(F("  config              - Show all configuration"));
+    Serial.println(F("  config sd/http/display/power - Show specific config"));
+    Serial.println(F("  set sdauto on/off   - Mount SD on boot"));
+    Serial.println(F("  set sdsave 3/60/600/1200 - SD save period (seconds)"));
+    Serial.println(F("  set httpsend 3/60/600/1200 - HTTP send period (seconds)"));
+    Serial.println(F("  set httptimeout 5-30 - HTTP timeout (seconds)"));
+    Serial.println(F("  set oledoff on/off  - OLED auto-off"));
+    Serial.println(F("  set oledtime 60/120/180 - OLED timeout (seconds)"));
+    Serial.println(F("  set led on/off      - Enable NeoPixel"));
+    Serial.println(F("  set ledbright 10/25/50/100 - LED brightness (%)"));
+    Serial.println(F("  configreset         - Reset to defaults"));
+    Serial.println(F("  configsave          - Save config to flash"));
+
     Serial.println(F("\n"));
   }
 
@@ -260,6 +274,194 @@ void processSerialCommand() {
       loggingEnabled = false;
       Serial.println("[STREAM] ✓ Stopped");
     }
+  }
+
+  // -------------------- CONFIGURATION COMMANDS --------------------
+  else if (cmd == "config") {
+    printConfig();
+  }
+
+  else if (cmd == "config sd") {
+    Serial.println("=== SD Configuration ===");
+    Serial.printf("Auto-mount on boot: %s\n", config.sdAutoMount ? "ON" : "OFF");
+    Serial.printf("Save period:        %lu ms (%lu s)\n", config.sdSavePeriod, config.sdSavePeriod / 1000);
+  }
+
+  else if (cmd == "config http") {
+    Serial.println("=== HTTP Configuration ===");
+    Serial.printf("Send period: %lu ms (%lu s)\n", config.httpSendPeriod, config.httpSendPeriod / 1000);
+    Serial.printf("Timeout:     %u seconds\n", config.httpTimeout);
+  }
+
+  else if (cmd == "config display") {
+    Serial.println("=== Display Configuration ===");
+    Serial.printf("Auto-off: %s\n", config.oledAutoOff ? "ON" : "OFF");
+    Serial.printf("Timeout:  %lu ms (%lu s)\n", config.oledTimeout, config.oledTimeout / 1000);
+  }
+
+  else if (cmd == "config power") {
+    Serial.println("=== Power/LED Configuration ===");
+    Serial.printf("NeoPixel enabled: %s\n", config.ledEnabled ? "YES" : "NO");
+    Serial.printf("Brightness:       %u%%\n", config.ledBrightness);
+  }
+
+  else if (cmd.startsWith("set ")) {
+    String param = cmd.substring(4);
+    param.trim();
+
+    // SD auto-mount
+    if (param == "sdauto on") {
+      config.sdAutoMount = true;
+      saveConfig();
+      Serial.println("[CONFIG] SD auto-mount: ON (will mount on next boot)");
+    }
+    else if (param == "sdauto off") {
+      config.sdAutoMount = false;
+      saveConfig();
+      Serial.println("[CONFIG] SD auto-mount: OFF");
+    }
+
+    // SD save period
+    else if (param == "sdsave 3") {
+      config.sdSavePeriod = 3000;
+      saveConfig();
+      Serial.println("[CONFIG] SD save period: 3 seconds");
+    }
+    else if (param == "sdsave 60") {
+      config.sdSavePeriod = 60000;
+      saveConfig();
+      Serial.println("[CONFIG] SD save period: 60 seconds");
+    }
+    else if (param == "sdsave 600") {
+      config.sdSavePeriod = 600000;
+      saveConfig();
+      Serial.println("[CONFIG] SD save period: 600 seconds (10 min)");
+    }
+    else if (param == "sdsave 1200") {
+      config.sdSavePeriod = 1200000;
+      saveConfig();
+      Serial.println("[CONFIG] SD save period: 1200 seconds (20 min)");
+    }
+
+    // HTTP send period
+    else if (param == "httpsend 3") {
+      config.httpSendPeriod = 3000;
+      saveConfig();
+      Serial.println("[CONFIG] HTTP send period: 3 seconds");
+    }
+    else if (param == "httpsend 60") {
+      config.httpSendPeriod = 60000;
+      saveConfig();
+      Serial.println("[CONFIG] HTTP send period: 60 seconds");
+    }
+    else if (param == "httpsend 600") {
+      config.httpSendPeriod = 600000;
+      saveConfig();
+      Serial.println("[CONFIG] HTTP send period: 600 seconds (10 min)");
+    }
+    else if (param == "httpsend 1200") {
+      config.httpSendPeriod = 1200000;
+      saveConfig();
+      Serial.println("[CONFIG] HTTP send period: 1200 seconds (20 min)");
+    }
+
+    // HTTP timeout
+    else if (param.startsWith("httptimeout ")) {
+      int timeout = param.substring(12).toInt();
+      if (timeout >= 5 && timeout <= 30) {
+        config.httpTimeout = timeout;
+        saveConfig();
+        Serial.printf("[CONFIG] HTTP timeout: %d seconds\n", timeout);
+      } else {
+        Serial.println("[CONFIG] ✗ Timeout must be 5-30 seconds");
+      }
+    }
+
+    // OLED auto-off
+    else if (param == "oledoff on") {
+      config.oledAutoOff = true;
+      saveConfig();
+      Serial.println("[CONFIG] OLED auto-off: ON");
+    }
+    else if (param == "oledoff off") {
+      config.oledAutoOff = false;
+      saveConfig();
+      u8g2.setPowerSave(0);  // Encender display inmediatamente
+      Serial.println("[CONFIG] OLED auto-off: OFF (always on)");
+    }
+
+    // OLED timeout
+    else if (param == "oledtime 60") {
+      config.oledTimeout = 60000;
+      saveConfig();
+      Serial.println("[CONFIG] OLED timeout: 60 seconds");
+    }
+    else if (param == "oledtime 120") {
+      config.oledTimeout = 120000;
+      saveConfig();
+      Serial.println("[CONFIG] OLED timeout: 120 seconds (2 min)");
+    }
+    else if (param == "oledtime 180") {
+      config.oledTimeout = 180000;
+      saveConfig();
+      Serial.println("[CONFIG] OLED timeout: 180 seconds (3 min)");
+    }
+
+    // LED enable/disable
+    else if (param == "led on") {
+      config.ledEnabled = true;
+      saveConfig();
+      applyLEDConfig();
+      Serial.println("[CONFIG] NeoPixel: ON");
+    }
+    else if (param == "led off") {
+      config.ledEnabled = false;
+      saveConfig();
+      applyLEDConfig();
+      Serial.println("[CONFIG] NeoPixel: OFF");
+    }
+
+    // LED brightness
+    else if (param == "ledbright 10") {
+      config.ledBrightness = 10;
+      saveConfig();
+      applyLEDConfig();
+      Serial.println("[CONFIG] LED brightness: 10%");
+    }
+    else if (param == "ledbright 25") {
+      config.ledBrightness = 25;
+      saveConfig();
+      applyLEDConfig();
+      Serial.println("[CONFIG] LED brightness: 25%");
+    }
+    else if (param == "ledbright 50") {
+      config.ledBrightness = 50;
+      saveConfig();
+      applyLEDConfig();
+      Serial.println("[CONFIG] LED brightness: 50%");
+    }
+    else if (param == "ledbright 100") {
+      config.ledBrightness = 100;
+      saveConfig();
+      applyLEDConfig();
+      Serial.println("[CONFIG] LED brightness: 100%");
+    }
+
+    else {
+      Serial.println("[CONFIG] ✗ Unknown parameter. Type 'help' for list.");
+    }
+  }
+
+  else if (cmd == "configreset") {
+    Serial.println("[CONFIG] Resetting to defaults...");
+    configSetDefaults();
+    saveConfig();
+    applyLEDConfig();
+    Serial.println("[CONFIG] ✓ Reset complete. Reboot to apply all changes.");
+  }
+
+  else if (cmd == "configsave") {
+    saveConfig();
   }
 
   // -------------------- UNKNOWN COMMAND --------------------
