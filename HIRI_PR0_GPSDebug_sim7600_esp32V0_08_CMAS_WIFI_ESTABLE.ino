@@ -508,11 +508,38 @@ void setup() {
   u8g2.begin();
   u8g2.setDisplayRotation(U8G2_R2);
   u8g2.setFont(u8g2_font_5x7_tf);
-  oledStatus("BOOT", "OLED OK", "VER", VERSION);
 
   pixels.begin();
   pixels.setPixelColor(0, pixels.Color(0, 50, 100));
   pixels.show();
+
+  // -------- Boot Animation --------
+  while (logoXOffset < LOGO_FINAL_X || hiriXOffset > HIRI_FINAL_X || proYOffset > PRO_FINAL_Y) {
+    // Logo se mueve hacia el centro desde la izquierda
+    if (logoXOffset < LOGO_FINAL_X) {
+      logoXOffset += 4;  // Movimiento hacia la derecha
+    }
+
+    // "HIRI" se mueve hacia el centro desde la derecha
+    if (hiriXOffset > HIRI_FINAL_X) {
+      hiriXOffset -= 4;  // Movimiento hacia la izquierda
+    }
+
+    // "PRO" sube desde abajo más lentamente
+    if (proYOffset > PRO_FINAL_Y) {
+      proYOffset -= 1;  // Velocidad reducida a 1 píxel por frame
+    }
+    drawAnimation();
+    delay(20);  // ~50 FPS
+  }
+
+  // Mostrar versión y device ID
+  u8g2.setFont(u8g2_font_5x7_tf);
+  u8g2.drawStr(58, 9, VERSION.c_str());
+  u8g2.setCursor(0, 60);
+  u8g2.print("ID:" + String(DEVICE_ID_STR));
+  u8g2.sendBuffer();
+  delay(1000);  // Mantener pantalla por 1 segundo
 
   pms.begin(9600);
 
@@ -526,9 +553,17 @@ void setup() {
   if (!rtc.begin()) {
     Serial.println("[RTC] Not found");
     rtcOK = false;
+    u8g2.setCursor(50, 60);
+    u8g2.print("RTC/FAIL");
+    u8g2.sendBuffer();
   } else {
     rtcOK = true;
+    Serial.println("[RTC] OK");
+    u8g2.setCursor(50, 60);
+    u8g2.print("RTC/OK");
+    u8g2.sendBuffer();
   }
+  delay(1000);  // Mantener RTC status por 1 segundo
 
   Serial.println("SHT31 test");
   if (!sht31.begin(0x44)) {  // Set to 0x45 for alternate i2c addr
@@ -1004,6 +1039,9 @@ if (SHT31OK == true) {
   // Formato: sdSaveCounter/sendCounter (intentos SD / exitosos HTTP)
   u8g2.print(" " + String(sdSaveCounter) + "/" + String(sendCounter) + " ID" + String(DEVICE_ID_STR));
   u8g2.sendBuffer();
+
+  // -------- Serial Commands --------
+  processSerialCommand();
 
   yield();
 }
