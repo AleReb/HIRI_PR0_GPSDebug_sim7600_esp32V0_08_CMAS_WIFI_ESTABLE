@@ -880,6 +880,10 @@ void loop() {
     // Update network info for error logging
     updateNetworkInfo();
 
+    // Print current configuration
+    Serial.println("\n[FIRST LOOP] Current Configuration:");
+    printConfig();
+
     // Retry RTC sync con modem (máximo 3 veces, 10 min entre intentos)
     if (rtcNetSyncPending && rtcModemSyncCount < MAX_MODEM_SYNC_COUNT
         && millis() >= rtcNextProbeMs && !wifiModeActive
