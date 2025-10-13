@@ -2,13 +2,13 @@
 // Satellite icon 8x8, 1 bit/pixel, LSB first
 static const unsigned char PROGMEM satelit_bitmap[8] = {
   0x06,
-  0x46,
-  0x36,
+  0x6E,
+  0x74,
   0x38,
-  0x1C,
-  0xED,
-  0xE1,
-  0x06
+  0x58,
+  0xE5,
+  0xC1,
+  0x07
 };
 
 
@@ -84,4 +84,113 @@ void drawHeader() {
 
   // Battery
   drawBatteryDynamic(115, 3, batV);
+}
+
+// ==================== Display State Machine Functions ====================
+
+// Pantalla 1: Datos CSV guardados en SD
+void displaySDSaved() {
+  u8g2.setFont(u8g2_font_5x7_tf);  // Use smaller font
+  u8g2.setCursor(0, 10);
+  u8g2.print("SD #" + String(sdSaveCounter) + " GUARDADO:");
+
+  // Dividir CSV en líneas de ~25 caracteres (128px / 5px por carácter)
+  int lineHeight = 9;         // Adjusted for 5x7 font
+  int startY = 20;            // Adjusted for 5x7 font
+  int maxCharsPerLine = 25;   // Adjusted for 5x7 font
+
+  int csvLen = lastSavedCSVLine.length();
+  int numLines = 0;
+  int startPos = 0;
+
+  while (startPos < csvLen && numLines < 5) {
+    int endPos = startPos + maxCharsPerLine;
+    if (endPos > csvLen) endPos = csvLen;
+
+    String segment = lastSavedCSVLine.substring(startPos, endPos);
+    u8g2.setCursor(0, startY + (numLines * lineHeight));
+    u8g2.print(segment);
+
+    startPos = endPos;
+    numLines++;
+  }
+}
+
+// Pantalla 3: Datos normales en tiempo real
+void displayNormal() {
+  DateTime now = rtcOK ? rtc.now() : DateTime(2000, 1, 1, 0, 0, 0);
+  snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
+  snprintf(dmy, sizeof(dmy), "%02d/%02d/%04d", now.day(), now.month(), now.year());
+
+  drawHeader();
+  u8g2.setFont(u8g2_font_5x7_tf);
+
+  u8g2.setCursor(0, 16);
+  u8g2.print("Lat:" + gpsLat + " HDOP:" + hdopStr);
+
+  u8g2.setCursor(0, 24);
+  u8g2.print("Lon:" + gpsLon + " ");
+  u8g2.print(dmy);
+
+  u8g2.setCursor(0, 32);
+  u8g2.print("Alt: " + gpsAlt + "m Spd: " + gpsSpeedKmh + "km/h");
+
+  u8g2.setCursor(0, 40);
+  u8g2.print("PM2.5:" + String(PM25) + " PM10:" + String(PM10) + " Hpm:" + String(pmsHum, 1));
+
+  u8g2.setCursor(0, 48);
+  if (SHT31OK == true) {
+    u8g2.print("Ti:" + String(rtcTempC, 1) + " Tpm:" + String(pmsTempC, 1) + " Te:" + String(tempsht31));
+  } else {
+    u8g2.print("Ti:" + String(rtcTempC, 1) + " Tpm:" + String(pmsTempC, 1));
+  }
+
+  u8g2.setCursor(0, 56);
+  unsigned long totalSeconds = (unsigned long)(millis() / 1000UL);
+  unsigned int seconds = totalSeconds % 60;
+  unsigned int minutes = (totalSeconds / 60) % 60;
+  unsigned int hours = (totalSeconds / 3600);
+  u8g2.print("Bat:" + String(batV, 2) + " CSQ:" + String(csq) + "  ON" + String(hours) + "-" + String(minutes) + "-" + String(seconds));
+
+  u8g2.setCursor(0, 64);
+  u8g2.print(streaming ? (loggingEnabled ? "SENT:ON+SD " : "SENT:ON   ") : "SENT:OFF  ");
+  u8g2.print(" " + String(sdSaveCounter) + "/" + String(sendCounter) + " ID" + String(DEVICE_ID_STR));
+}
+
+// Actualizar máquina de estados del display
+void updateDisplayStateMachine() {
+  uint32_t elapsed = millis() - displayStateStartTime;
+
+  // Máquina de estados con transiciones automáticas
+  switch (displayState) {
+    case DISP_SD_SAVED:
+      // Después de 700ms, volver a pantalla normal
+      if (elapsed >= SD_SAVE_DISPLAY_MS) {
+        displayState = DISP_NORMAL;
+        displayStateStartTime = millis();
+        Serial.println("[DISPLAY] State: SD_SAVED -> NORMAL");
+      }
+      break;
+
+    case DISP_NORMAL:
+      // Se mantiene en NORMAL hasta que se active otra transición
+      break;
+  }
+}
+
+// Renderizar la pantalla según el estado actual
+void renderDisplay() {
+  u8g2.clearBuffer();
+
+  switch (displayState) {
+    case DISP_SD_SAVED:
+      displaySDSaved();
+      break;
+
+    case DISP_NORMAL:
+      displayNormal();
+      break;
+  }
+
+  u8g2.sendBuffer();
 }

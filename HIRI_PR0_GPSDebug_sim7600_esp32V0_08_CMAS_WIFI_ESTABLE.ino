@@ -18,7 +18,7 @@
 #include <Preferences.h>
 
 // -------------------- VERSION --------------------
-String VERSION = "0.3.9.4";  // HTTP robustness + SD save counter display+config
+String VERSION = "0.3.9.5";  // HTTP robustness + SD save counter display+config
 
 #define TINY_GSM_MODEM_SIM7600
 #define TINY_GSM_RX_BUFFER 4096  // Increased from 2048 for better stability
@@ -120,8 +120,8 @@ SPIClass spiSD(HSPI);
 bool SDOK = false;
 bool loggingEnabled = false;
 String csvFileName = "";
-String logFilePath = "/errors.csv";  // Error log file
-String failedTxPath = "/failed_tx.csv";  // Failed transmissions log (debug only, no retries)
+String logFilePath = "";  // Error log file (will be initialized with device ID in setup)
+String failedTxPath = "";  // Failed transmissions log (will be initialized with device ID in setup)
 String deviceID = "/HIRIP";  // nombre base de archivo (legacy, no se usa)
 static uint8_t lastDayLogged = 0;  // Para detectar cambio de día
 const int SD_SCLK = 14, SD_MISO = 2, SD_MOSI = 15, SD_CS = 13;
@@ -172,11 +172,22 @@ const uint32_t SD_SAVE_PERIOD_MS = 2000;  // SD logging every 2s (aligned with G
 bool streaming = false;
 uint32_t lastStream = 0;
 uint32_t lastSdSave = 0;
+bool wasStreamingBeforeBoot = false;  // Track if was streaming before reboot (for autostart logic)
 
-// sending feedback
-uint32_t lastSendMark = 0;
-int lastSendState = 0;  // 0=in progress, 1=OK, 2=FAIL
-const uint32_t SENDING_WINDOW_MS = 700;
+
+
+// SD save feedback
+const uint32_t SD_SAVE_DISPLAY_MS = 700;  // Mostrar datos guardados por 0.7 segundos
+String lastSavedCSVLine = "";  // Línea CSV completa guardada en SD
+
+// ==================== Display State Machine ====================
+enum DisplayState {
+  DISP_NORMAL,
+  DISP_SD_SAVED
+};
+
+volatile DisplayState displayState = DISP_NORMAL;
+volatile uint32_t displayStateStartTime = 0;
 
 // -------------------- Watchdog --------------------
 #define WDT_TIMEOUT 60  // 25 segundos (para cubrir transmisión de ~3s + margen)
@@ -397,6 +408,9 @@ struct SystemConfig {
   bool autostart;             // Iniciar streaming/logging al encender (default: false)
   bool autostartWaitGps;      // Esperar GPS fix antes de iniciar (default: false)
   uint16_t autostartGpsTimeout; // Timeout GPS en segundos (default: 600 = 10min)
+
+  // GNSS Mode
+  uint8_t gnssMode;           // Modo GNSS: 1=GPS, 3=GPS+GLO, 5=GPS+BDS, 7=GPS+GLO+BDS, 15=ALL (default: 15)
 };
 
 SystemConfig config;
@@ -409,6 +423,11 @@ void printConfig();
 void printSDInfo();
 void printSDFileList();
 void applyLEDConfig();
+void clearSDCard();
+
+// Forward declarations for display functions
+void updateDisplayStateMachine();
+void renderDisplay();
 
 // -------------------- GNSS variables --------------------
 uint32_t gnssStartMs = 0;
@@ -495,6 +514,9 @@ void setup() {
   bool wasStreaming = prefs.getBool("streaming", false);
   prefs.end();
 
+  // Store in global variable for autostart logic
+  wasStreamingBeforeBoot = wasStreaming;
+
   if (rebootReason.indexOf("Watchdog") >= 0 || rebootReason == "Panic") {
     Serial.println("[BOOT] Recovered from " + rebootReason);
     Serial.println("[BOOT] Send counter (HTTP success): " + String(sendCounter));
@@ -540,6 +562,12 @@ void setup() {
   // -------- Load Configuration --------
   loadConfig();
   applyLEDConfig();  // Apply LED brightness/enable settings
+
+  // -------- Initialize SD file paths with device ID --------
+  logFilePath = String("/errors_h") + String(DEVICE_ID_STR) + String(".csv");
+  failedTxPath = String("/failed_h") + String(DEVICE_ID_STR) + String(".csv");
+  Serial.println("[SD] Error log file: " + logFilePath);
+  Serial.println("[SD] Failed TX file: " + failedTxPath);
 
   // -------- SD Auto-Mount (if enabled) --------
   if (config.sdAutoMount && !SDOK) {
@@ -606,10 +634,10 @@ void setup() {
     delay(20);  // ~50 FPS
   }
 
-  // Mostrar versión y device ID
+  // Mostrar versión y device ID en pantalla inicial
   u8g2.setFont(u8g2_font_5x7_tf);
   u8g2.drawStr(58, 9, VERSION.c_str());
-  u8g2.setCursor(0, 60);
+  u8g2.setCursor(0, 55);
   u8g2.print("ID:" + String(DEVICE_ID_STR));
   u8g2.sendBuffer();
   delay(1000);  // Mantener pantalla por 1 segundo
@@ -621,22 +649,34 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN_1), isrBtn1, FALLING);
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN_2), isrBtn2, FALLING);
 
-  // RTC (una sola vez)
+  // RTC (una sola vez) - Mostrar en línea separada del ID
   Serial.println("[RTC] test");
   if (!rtc.begin()) {
     Serial.println("[RTC] Not found");
     rtcOK = false;
-    u8g2.setCursor(50, 60);
-    u8g2.print("RTC/FAIL");
+    u8g2.setCursor(0, 64);
+    u8g2.print("RTC:FAIL");
     u8g2.sendBuffer();
   } else {
     rtcOK = true;
     Serial.println("[RTC] OK");
-    u8g2.setCursor(50, 60);
-    u8g2.print("RTC/OK");
+    u8g2.setCursor(0, 64);
+    u8g2.print("RTC:OK");
     u8g2.sendBuffer();
   }
-  delay(1000);  // Mantener RTC status por 1 segundo
+
+  // SD Status indicator (if auto-mount is enabled)
+  if (config.sdAutoMount) {
+    u8g2.setCursor(60, 64);
+    if (SDOK) {
+      u8g2.print(" SD:OK");
+    } else {
+      u8g2.print(" SD:FAIL");
+    }
+    u8g2.sendBuffer();
+  }
+
+  delay(1000);  // Mantener status por 1 segundo
 
   Serial.println("SHT31 test");
   if (!sht31.begin(0x44)) {  // Set to 0x45 for alternate i2c addr
@@ -890,7 +930,7 @@ void loop() {
     printConfig();
 
     // -------- Autostart Logic --------
-    if (config.autostart && !streaming && !wasStreaming) {
+    if (config.autostart && !streaming && !wasStreamingBeforeBoot) {
       Serial.println("\n[AUTOSTART] Enabled - initiating streaming");
 
       // Check if we need to wait for GPS fix
@@ -1137,6 +1177,22 @@ void loop() {
     lastStream = millis();
     lastOledActivity = millis();  // Reset OLED timer on transmission activity
 
+    // =====================================================
+    // PRIORIDAD 1: GUARDAR EN SD PRIMERO (antes de HTTP)
+    // =====================================================
+    // Guardar datos en SD ANTES de intentar transmitir por HTTP
+    // Esto asegura que los datos se guarden localmente incluso si la transmisión falla
+    bool sdSaved = saveCSVData();
+
+    // Activar visualización temporal de datos guardados
+    if (sdSaved && loggingEnabled) {
+      displayState = DISP_SD_SAVED;
+      displayStateStartTime = millis();
+      Serial.println("[SD] ✓ Data saved successfully - Counter: " + String(sdSaveCounter));
+      renderDisplay();
+      delay(SD_SAVE_DISPLAY_MS);
+    }
+
     // valores mapping (v1 sin sanitizar, a pedido)
     const String v1 = isnan(pmsTempC) ? "0" : safeFloatStr(pmsTempC);// Temp PMS (o 0/NaN según sensor)
     const String v2 = isnan(pmsHum) ? "0" : safeFloatStr(pmsHum);  // RH PMS si válido
@@ -1158,7 +1214,7 @@ void loop() {
 //
 if (SHT31OK == true) {
     const String v18 = isnan(tempsht31) ? "0" : safeFloatStr(tempsht31);  // Temp SHT31 si válido
-    const String v19 = isnan(humsht31) ? "0" : safeFloatStr(humsht31);    // RH SHT31 si válido 
+    const String v19 = isnan(humsht31) ? "0" : safeFloatStr(humsht31);    // RH SHT31 si válido
     valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17+ "," + v18 + "," + v19;
  url = String(API_BASE) + "?idsSensores=" + IDS_SENSORES + "&idsVariables=" + IDS_VARIABLESSHT31 + "&valores=" + valores;
 
@@ -1166,8 +1222,10 @@ if (SHT31OK == true) {
     valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17;
   url = String(API_BASE) + "?idsSensores=" + IDS_SENSORES + "&idsVariables=" + IDS_VARIABLES + "&valores=" + valores;
   }
-    
 
+    // =====================================================
+    // PRIORIDAD 2: TRANSMITIR POR HTTP (después de guardar SD)
+    // =====================================================
     Serial.println("[HTTP] GET " + url);
 
     // Modo SYNC: Transmisión HTTP bloqueante (con timeout de 15s y watchdog reset)
@@ -1175,9 +1233,9 @@ if (SHT31OK == true) {
     bool ok = httpGet_webhook(url);
     isCurrentlyTransmitting = false;  // Desactivar bandera
 
-    lastSendState = ok ? 1 : 2;
     if (ok) {
       sendCounter++;
+      Serial.println("[HTTP] ✓ Transmission successful - Counter: " + String(sendCounter));
       // Persist send counter every successful transmission
       prefs.begin("system", false);
       prefs.putUInt("sendCnt", sendCounter);
@@ -1187,61 +1245,14 @@ if (SHT31OK == true) {
       // TRANSMISIÓN FALLIDA: Guardar en CSV de fallos para análisis (NO se reintenta)
       // Esto permite debuggear problemas de red sin perder registro de intentos fallidos
       saveFailedTransmission(url, lastSendState == 2 ? "HTTP_FAIL" : "TIMEOUT");
-      Serial.println("[HTTP] Transmission failed, logged to /failed_tx.csv");
+      Serial.println("[HTTP] ✗ Transmission failed, logged to " + failedTxPath);
     }
-
-    // IMPORTANTE: Guardar datos en CSV principal SIEMPRE (independiente de si HTTP tuvo éxito)
-    // Esto garantiza que los datos de sensores/GPS se almacenen localmente incluso si falla la transmisión
-    // Prioridad: Leer sensores > Guardar SD > Transmitir HTTP
-    saveCSVData();
   }
 
   // -------- OLED --------
-  DateTime now = rtcOK ? rtc.now() : DateTime(2000, 1, 1, 0, 0, 0);
-  //char hhmmss[9];
-  snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
-  //char dmy[11];  // The size needs to be big enough for "dd/mm/yyyy\0" (11 characters).
-  snprintf(dmy, sizeof(dmy), "%02d/%02d/%04d", now.day(), now.month(), now.year());
-
-  u8g2.clearBuffer();
-  drawHeader();
-  u8g2.setFont(u8g2_font_5x7_tf);
-  //u8g2.setCursor(0, 8);
-  //u8g2.print("GPS: " + gpsStatus + " Sat:" + satellitesStr + " HDOP:" + hdopStr);// header
-  u8g2.setCursor(0, 16);
-  u8g2.print("Lat:" + gpsLat + " HDOP:" + hdopStr);
-  //u8g2.print(hhmmss);
-  u8g2.setCursor(0, 24);
-  u8g2.print("Lon:" + gpsLon + " ");
-  u8g2.print(dmy);
-  u8g2.setCursor(0, 32);
-  u8g2.print("Alt: " + gpsAlt + "m Spd: " + gpsSpeedKmh + "km/h");
-  u8g2.setCursor(0, 40);
-  u8g2.print("PM2.5:" + String(PM25) + " PM10:" + String(PM10) + " Hpm:" + String(pmsHum, 1));
-  u8g2.setCursor(0, 48);
-  if (SHT31OK == true) {
-    u8g2.print("Ti:" + String(rtcTempC, 1) + " Tpm:" + String(pmsTempC, 1) + " Te:" + String(tempsht31));
-  } else {
-    u8g2.print("Ti:" + String(rtcTempC, 1) + " Tpm:" + String(pmsTempC, 1));
-  }
-  u8g2.setCursor(0, 56);
-  unsigned long totalSeconds = (unsigned long)(millis() / 1000UL);
-  unsigned int seconds = totalSeconds % 60;
-  unsigned int minutes = (totalSeconds / 60) % 60;
-  unsigned int hours = (totalSeconds / 3600);
-  u8g2.print("Bat:" + String(batV, 2) + " CSQ:" + String(csq) + "  ON" + String(hours) + "-" + String(minutes) + "-" + String(seconds));
-  u8g2.setCursor(0, 64);
-  bool sending = (millis() - lastSendMark) < SENDING_WINDOW_MS;
-  if (sending && streaming) {
-    if (lastSendState == 0) u8g2.print("SENDING...  ");
-    else if (lastSendState == 1) u8g2.print("SENT OK    ");
-    else if (lastSendState == 2) u8g2.print("SEND FAIL  ");
-  } else {
-    u8g2.print(streaming ? (loggingEnabled ? "SENT:ON+SD " : "SENT:ON   ") : "SENT:OFF  ");
-  }
-  // Formato: sdSaveCounter/sendCounter (intentos SD / exitosos HTTP)
-  u8g2.print(" " + String(sdSaveCounter) + "/" + String(sendCounter) + " ID" + String(DEVICE_ID_STR));
-  u8g2.sendBuffer();
+  // The display is now handled by a state machine.
+  updateDisplayStateMachine();
+  renderDisplay();
 
   // -------- OLED Auto-Off Logic --------
   if (config.oledAutoOff) {
