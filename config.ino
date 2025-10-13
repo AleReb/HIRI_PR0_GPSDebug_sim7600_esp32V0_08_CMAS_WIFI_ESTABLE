@@ -26,7 +26,7 @@ void loadConfig() {
   // Autostart
   config.autostart = prefs.getBool("autoStart", false);
   config.autostartWaitGps = prefs.getBool("autoGPS", false);
-  config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 600);
+  config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 300);
 
   prefs.end();
 
@@ -91,7 +91,7 @@ void configSetDefaults() {
 
   config.autostart = false;           // NO autostart
   config.autostartWaitGps = false;    // NO esperar GPS
-  config.autostartGpsTimeout = 600;   // 10 minutos
+  config.autostartGpsTimeout = 300;   // 5 minutos (default)
 
   Serial.println("[CONFIG] Reset to defaults");
 }

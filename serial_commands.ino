@@ -59,7 +59,7 @@ void processSerialCommand() {
     Serial.println(F("  set ledbright 10/25/50/100 - LED brightness (%)"));
     Serial.println(F("  set autostart on/off - Autostart streaming on boot"));
     Serial.println(F("  set autowaitgps on/off - Wait GPS fix before start"));
-    Serial.println(F("  set autogpsto 60-1200 - GPS timeout (seconds)"));
+    Serial.println(F("  set autogpsto 60-600 - GPS timeout (60s-10min, default: 300s)"));
     Serial.println(F("  configreset         - Reset to defaults"));
     Serial.println(F("  configsave          - Save config to flash"));
 
@@ -477,12 +477,12 @@ void processSerialCommand() {
     // Autostart GPS timeout
     else if (param.startsWith("autogpsto ")) {
       int val = param.substring(10).toInt();
-      if (val >= 60 && val <= 1200) {
+      if (val >= 60 && val <= 600) {
         config.autostartGpsTimeout = val;
         saveConfig();
         Serial.printf("[CONFIG] Autostart GPS timeout: %u seconds (%u min)\n", val, val / 60);
       } else {
-        Serial.println("[CONFIG] ✗ Invalid timeout (must be 60-1200 seconds)");
+        Serial.println("[CONFIG] ✗ Invalid timeout (must be 60-600 seconds / 1-10 min)");
       }
     }
 

@@ -889,6 +889,122 @@ void loop() {
     Serial.println("\n[FIRST LOOP] Current Configuration:");
     printConfig();
 
+    // -------- Autostart Logic --------
+    if (config.autostart && !streaming && !wasStreaming) {
+      Serial.println("\n[AUTOSTART] Enabled - initiating streaming");
+
+      // Check if we need to wait for GPS fix
+      if (config.autostartWaitGps) {
+        Serial.printf("[AUTOSTART] Waiting for GPS fix (timeout: %us / %umin)...\n",
+                      config.autostartGpsTimeout, config.autostartGpsTimeout / 60);
+
+        uint32_t gpsWaitStart = millis();
+        bool gotFix = false;
+
+        // Wait for GPS fix with timeout
+        while ((millis() - gpsWaitStart) < (config.autostartGpsTimeout * 1000UL)) {
+          // Reset watchdog
+          esp_task_wdt_reset();
+
+          // Process NMEA data
+          bool d, o;
+          atTick(d, o);
+
+          // Check if we have fix
+          if (gpsStatus == "Fix") {
+            gotFix = true;
+            uint32_t waitTime = (millis() - gpsWaitStart) / 1000;
+            Serial.printf("[AUTOSTART] GPS fix acquired after %lu seconds\n", waitTime);
+            break;
+          }
+
+          // Update display every second
+          static uint32_t lastDisplay = 0;
+          if (millis() - lastDisplay >= 1000) {
+            lastDisplay = millis();
+            uint32_t elapsed = (millis() - gpsWaitStart) / 1000;
+            uint32_t remaining = config.autostartGpsTimeout - elapsed;
+
+            u8g2.clearBuffer();
+            u8g2.setFont(u8g2_font_5x7_tf);
+            u8g2.setCursor(0, 12);
+            u8g2.print("AUTOSTART: Wait GPS");
+            u8g2.setCursor(0, 26);
+            u8g2.print("Satellites: " + satellitesStr);
+            u8g2.setCursor(0, 40);
+            u8g2.print("Elapsed: " + String(elapsed) + "s");
+            u8g2.setCursor(0, 54);
+            u8g2.print("Remaining: " + String(remaining) + "s");
+            u8g2.sendBuffer();
+          }
+
+          delay(100);
+        }
+
+        if (!gotFix) {
+          Serial.println("[AUTOSTART] GPS timeout - starting anyway");
+        }
+      }
+
+      // Initialize SD if not already mounted
+      if (!SDOK) {
+        Serial.println("[AUTOSTART] Mounting SD card...");
+        spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
+        SDOK = SD.begin(SD_CS, spiSD);
+
+        if (SDOK) {
+          Serial.println("[AUTOSTART] SD mounted successfully");
+
+          // Create CSV file if needed
+          if (csvFileName.length() == 0) {
+            csvFileName = generateCSVFileName();
+            writeCSVHeader();
+            writeErrorLogHeader();
+
+            prefs.begin("system", false);
+            prefs.putString("csvFile", csvFileName);
+            prefs.end();
+
+            Serial.println("[AUTOSTART] Created CSV file: " + csvFileName);
+          }
+        } else {
+          Serial.println("[AUTOSTART] SD mount failed - will log to serial only");
+        }
+      }
+
+      // Start streaming
+      streaming = true;
+      loggingEnabled = SDOK;
+      lastStream = 0;
+
+      // Reset counters for autostart (not a watchdog recovery)
+      sendCounter = 0;
+      sdSaveCounter = 0;
+
+      // Persist streaming state
+      prefs.begin("system", false);
+      prefs.putBool("streaming", true);
+      prefs.putUInt("sendCnt", 0);
+      prefs.putUInt("sdCnt", 0);
+      prefs.end();
+
+      Serial.println("[AUTOSTART] Streaming started - SD logging: " + String(loggingEnabled ? "ON" : "OFF"));
+
+      // Show status on display for 2 seconds
+      u8g2.clearBuffer();
+      u8g2.setFont(u8g2_font_5x7_tf);
+      u8g2.setCursor(0, 12);
+      u8g2.print("AUTOSTART: READY");
+      u8g2.setCursor(0, 26);
+      u8g2.print("Streaming: ON");
+      u8g2.setCursor(0, 40);
+      u8g2.print("SD Logging: " + String(loggingEnabled ? "ON" : "OFF"));
+      u8g2.setCursor(0, 54);
+      u8g2.print("GPS: " + gpsStatus + " Sats:" + satellitesStr);
+      u8g2.sendBuffer();
+      delay(2000);
+    }
+
     // Retry RTC sync con modem (máximo 3 veces, 10 min entre intentos)
     if (rtcNetSyncPending && rtcModemSyncCount < MAX_MODEM_SYNC_COUNT
         && millis() >= rtcNextProbeMs && !wifiModeActive
