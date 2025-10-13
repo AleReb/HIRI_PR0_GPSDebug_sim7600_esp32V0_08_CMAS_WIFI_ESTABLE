@@ -23,6 +23,11 @@ void loadConfig() {
   config.ledEnabled = prefs.getBool("ledEn", true);
   config.ledBrightness = prefs.getUChar("ledBr", 50);
 
+  // Autostart
+  config.autostart = prefs.getBool("autoStart", false);
+  config.autostartWaitGps = prefs.getBool("autoGPS", false);
+  config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 600);
+
   prefs.end();
 
   Serial.println("[CONFIG] Loaded from flash");
@@ -34,6 +39,10 @@ void loadConfig() {
                 config.oledAutoOff ? "ON" : "OFF", config.oledTimeout);
   Serial.printf("[CONFIG] LED enabled: %s, brightness: %u%%\n",
                 config.ledEnabled ? "YES" : "NO", config.ledBrightness);
+  Serial.printf("[CONFIG] Autostart: %s, wait GPS: %s, GPS timeout: %us\n",
+                config.autostart ? "YES" : "NO",
+                config.autostartWaitGps ? "YES" : "NO",
+                config.autostartGpsTimeout);
 }
 
 // -------------------- Save Configuration --------------------
@@ -56,6 +65,11 @@ void saveConfig() {
   prefs.putBool("ledEn", config.ledEnabled);
   prefs.putUChar("ledBr", config.ledBrightness);
 
+  // Autostart
+  prefs.putBool("autoStart", config.autostart);
+  prefs.putBool("autoGPS", config.autostartWaitGps);
+  prefs.putUShort("autoGPSTO", config.autostartGpsTimeout);
+
   prefs.end();
 
   Serial.println("[CONFIG] Saved to flash");
@@ -74,6 +88,10 @@ void configSetDefaults() {
 
   config.ledEnabled = true;           // LED habilitado
   config.ledBrightness = 50;          // 50% brillo
+
+  config.autostart = false;           // NO autostart
+  config.autostartWaitGps = false;    // NO esperar GPS
+  config.autostartGpsTimeout = 600;   // 10 minutos
 
   Serial.println("[CONFIG] Reset to defaults");
 }
@@ -100,6 +118,12 @@ void printConfig() {
   Serial.println("\n[Power/LED]");
   Serial.printf("  NeoPixel enabled:   %s\n", config.ledEnabled ? "YES" : "NO");
   Serial.printf("  Brightness:         %u%%\n", config.ledBrightness);
+
+  Serial.println("\n[Autostart]");
+  Serial.printf("  Autostart:          %s\n", config.autostart ? "YES" : "NO");
+  Serial.printf("  Wait for GPS fix:   %s\n", config.autostartWaitGps ? "YES" : "NO");
+  Serial.printf("  GPS timeout:        %u seconds (%u min)\n",
+                config.autostartGpsTimeout, config.autostartGpsTimeout / 60);
 
   Serial.println();
 }

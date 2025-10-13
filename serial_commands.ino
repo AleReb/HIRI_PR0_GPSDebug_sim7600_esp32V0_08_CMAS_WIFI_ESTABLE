@@ -57,6 +57,9 @@ void processSerialCommand() {
     Serial.println(F("  set oledtime 60/120/180 - OLED timeout (seconds)"));
     Serial.println(F("  set led on/off      - Enable NeoPixel"));
     Serial.println(F("  set ledbright 10/25/50/100 - LED brightness (%)"));
+    Serial.println(F("  set autostart on/off - Autostart streaming on boot"));
+    Serial.println(F("  set autowaitgps on/off - Wait GPS fix before start"));
+    Serial.println(F("  set autogpsto 60-1200 - GPS timeout (seconds)"));
     Serial.println(F("  configreset         - Reset to defaults"));
     Serial.println(F("  configsave          - Save config to flash"));
 
@@ -445,6 +448,42 @@ void processSerialCommand() {
       saveConfig();
       applyLEDConfig();
       Serial.println("[CONFIG] LED brightness: 100%");
+    }
+
+    // Autostart
+    else if (param == "autostart on") {
+      config.autostart = true;
+      saveConfig();
+      Serial.println("[CONFIG] Autostart: ON (will start on next boot)");
+    }
+    else if (param == "autostart off") {
+      config.autostart = false;
+      saveConfig();
+      Serial.println("[CONFIG] Autostart: OFF");
+    }
+
+    // Autostart wait GPS
+    else if (param == "autowaitgps on") {
+      config.autostartWaitGps = true;
+      saveConfig();
+      Serial.println("[CONFIG] Autostart wait GPS: ON (will wait for fix)");
+    }
+    else if (param == "autowaitgps off") {
+      config.autostartWaitGps = false;
+      saveConfig();
+      Serial.println("[CONFIG] Autostart wait GPS: OFF");
+    }
+
+    // Autostart GPS timeout
+    else if (param.startsWith("autogpsto ")) {
+      int val = param.substring(10).toInt();
+      if (val >= 60 && val <= 1200) {
+        config.autostartGpsTimeout = val;
+        saveConfig();
+        Serial.printf("[CONFIG] Autostart GPS timeout: %u seconds (%u min)\n", val, val / 60);
+      } else {
+        Serial.println("[CONFIG] ✗ Invalid timeout (must be 60-1200 seconds)");
+      }
     }
 
     else {

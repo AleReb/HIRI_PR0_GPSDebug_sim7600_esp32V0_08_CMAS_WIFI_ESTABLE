@@ -392,6 +392,11 @@ struct SystemConfig {
   // Power Management
   bool ledEnabled;            // NeoPixel habilitado (default: true)
   uint8_t ledBrightness;      // Brillo LED: 10, 25, 50, 100 (default: 50%)
+
+  // Autostart
+  bool autostart;             // Iniciar streaming/logging al encender (default: false)
+  bool autostartWaitGps;      // Esperar GPS fix antes de iniciar (default: false)
+  uint16_t autostartGpsTimeout; // Timeout GPS en segundos (default: 600 = 10min)
 };
 
 SystemConfig config;
