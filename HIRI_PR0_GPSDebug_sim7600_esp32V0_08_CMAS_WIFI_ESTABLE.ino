@@ -18,7 +18,7 @@
 #include <Preferences.h>
 
 // -------------------- VERSION --------------------
-String VERSION = "0.3.9.1";  // Robust WiFi server: AJAX retry, chunked HTML, better file listing
+String VERSION = "0.3.9.2";  // HTTP robustness + SD save counter display
 
 #define TINY_GSM_MODEM_SIM7600
 #define TINY_GSM_RX_BUFFER 4096  // Increased from 2048 for better stability
@@ -243,8 +243,8 @@ const uint32_t BAT_SAMPLE_INTERVAL_MS = 5;  // Tomar 1 muestra cada 5ms
 // -------------------- Measurements API (real endpoint) --------------------
 const char* API_BASE = "http://api-sensores.cmasccp.cl/insertarMedicion";
 // Must match backend exactly:
-const char* IDS_SENSORES = "401,401,401,401,401,402,402,402,402,402,403,404,405,405,405,405,405";  //sensor 1
-//const char* IDS_SENSORES = "406,406,406,406,406,407,407,407,407,407,408,409,410,410,410,410,410";  //sensor 2
+//const char* IDS_SENSORES = "401,401,401,401,401,402,402,402,402,402,403,404,405,405,405,405,405";  //sensor 1
+const char* IDS_SENSORES = "406,406,406,406,406,407,407,407,407,407,408,409,410,410,410,410,410";  //sensor 2
 //const char* IDS_SENSORES = "415,415,415,415,415,416,416,416,416,416,417,418,419,419,419,419,419,420,420";  //sensor 3
 //
 // &idsVariables=3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,3,6&valores= Grados celcius415),Humedad (415),Material particulado PM 1.0 (415), Material particulado PM 2.5 ,Material particulado PM 10 (415),Latitud ,Longitud ,Intensidad señal telefónica Adimensional ,Velocidad_km/h, Satelites int ,Grados celcius °C ,Voltaje V(418),Latitud °(419),Longitud °(419),ID String(419),Numero de envios Numeral(419),Registro SD Bool(419),Grados celcius °C(420),Humedad %(420)          
@@ -253,9 +253,10 @@ const char* IDS_VARIABLESSHT31 = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,3,
 // ur format helpers
  String valores;
  String url;
-// ID string for variable 
-const char* DEVICE_ID_STR = "01";  //
-static uint32_t sendCounter = 0;
+// ID string for variable
+const char* DEVICE_ID_STR = "02";  //
+static uint32_t sendCounter = 0;      // Transmisiones HTTP exitosas
+static uint32_t sdSaveCounter = 0;    // Total de guardados en SD (intentos)
 
 // -------------------- XTRA / AGNSS --------------------
 static const uint32_t XTRA_REFRESH_MS = 3UL * 24UL * 60UL * 60UL * 1000UL;  // 3 days
@@ -451,13 +452,15 @@ void setup() {
   // Restore persistent state after reboot
   prefs.begin("system", false);
   sendCounter = prefs.getUInt("sendCnt", 0);
+  sdSaveCounter = prefs.getUInt("sdCnt", 0);
   csvFileName = prefs.getString("csvFile", "");
   bool wasStreaming = prefs.getBool("streaming", false);
   prefs.end();
 
   if (rebootReason.indexOf("Watchdog") >= 0 || rebootReason == "Panic") {
     Serial.println("[BOOT] Recovered from " + rebootReason);
-    Serial.println("[BOOT] Send counter: " + String(sendCounter));
+    Serial.println("[BOOT] Send counter (HTTP success): " + String(sendCounter));
+    Serial.println("[BOOT] SD save counter (attempts): " + String(sdSaveCounter));
     Serial.println("[BOOT] CSV file: " + csvFileName);
 
     // Auto-restart streaming if was active
@@ -627,10 +630,11 @@ void handleButtons() {
       streaming = true;
       lastStream = 0;
 
-      // RESETEAR sendCounter cuando el usuario presiona START manualmente
-      // Solo debe continuar desde el último valor si fue reinicio por watchdog
+      // RESETEAR contadores cuando el usuario presiona START manualmente
+      // Solo deben continuar desde el último valor si fue reinicio por watchdog
       sendCounter = 0;
-      Serial.println("[STREAM] Resetting sendCounter to 0 (manual START)");
+      sdSaveCounter = 0;
+      Serial.println("[STREAM] Resetting counters to 0 (manual START)");
 
       if (!SDOK) {
         spiSD.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
@@ -649,10 +653,11 @@ void handleButtons() {
       }
       loggingEnabled = SDOK;
 
-      // Persist streaming state y resetear sendCounter en flash
+      // Persist streaming state y resetear contadores en flash
       prefs.begin("system", false);
       prefs.putBool("streaming", true);
-      prefs.putUInt("sendCnt", 0);  // Guardar 0 en flash para inicio manual
+      prefs.putUInt("sendCnt", 0);   // Guardar 0 en flash para inicio manual
+      prefs.putUInt("sdCnt", 0);     // Guardar 0 en flash para inicio manual
       prefs.end();
 
       Serial.println(String("[STREAM] START + SD logging ") + (loggingEnabled ? "ON" : "OFF"));
@@ -938,6 +943,7 @@ if (SHT31OK == true) {
       // Persist send counter every successful transmission
       prefs.begin("system", false);
       prefs.putUInt("sendCnt", sendCounter);
+      prefs.putUInt("sdCnt", sdSaveCounter);  // También persistir SD counter
       prefs.end();
     } else {
       // TRANSMISIÓN FALLIDA: Guardar en CSV de fallos para análisis (NO se reintenta)
@@ -995,7 +1001,8 @@ if (SHT31OK == true) {
   } else {
     u8g2.print(streaming ? (loggingEnabled ? "SENT:ON+SD " : "SENT:ON   ") : "SENT:OFF  ");
   }
-  u8g2.print(" UP:" + String(sendCounter) + " ID" + String(DEVICE_ID_STR));
+  // Formato: sdSaveCounter/sendCounter (intentos SD / exitosos HTTP)
+  u8g2.print(" " + String(sdSaveCounter) + "/" + String(sendCounter) + " ID" + String(DEVICE_ID_STR));
   u8g2.sendBuffer();
 
   yield();

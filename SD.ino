@@ -58,6 +58,7 @@ bool saveCSVData() {
   if (f) {
     f.println(line);
     f.close();
+    sdSaveCounter++;  // Incrementar contador de guardados exitosos en SD
     Serial.println(String("[SD] Saved line: ") + line);
     return true;
   }

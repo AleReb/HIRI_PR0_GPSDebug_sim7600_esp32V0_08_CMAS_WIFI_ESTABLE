@@ -102,7 +102,7 @@ HIRI_PR0_GPSDebug_sim7600_esp32V0_08_CMAS_WIFI_ESTABLE/
    - Timeout: 15 segundos
    - Reintentos automáticos con backoff en caso de fallo de red
 
-## Mejoras v0.4.0 (Branch feature/robust-http-transmission)
+## Mejoras v0.3.9.2 (Branch feature/robust-http-transmission)
 
 ### Sistema de transmisión HTTP robusto
 
@@ -136,10 +136,18 @@ PDP_RECONNECT_TIMEOUT_MS = 30000     // Timeout por intento (30s)
 - **Prioridad:** Leer sensores > Guardar SD > Transmitir HTTP
 - Los datos locales están garantizados incluso si falla la transmisión
 
+#### Contador de guardados SD vs HTTP exitosos
+Display OLED muestra el formato `sdSaves/httpSuccess`:
+- **sdSaves:** Total de guardados exitosos en tarjeta SD
+- **httpSuccess:** Total de transmisiones HTTP exitosas al servidor
+- **Ejemplo:** `432/415` = 432 datos guardados en SD, 415 subidos exitosamente
+- **Persistencia:** Ambos contadores se guardan en flash y sobreviven reinicios por watchdog
+
 ### Beneficios
 ✅ Reduce bloqueos al viajar entre redes celulares
 ✅ Evita resets por watchdog durante reconexiones largas
 ✅ Permite debug de problemas de red sin perder datos locales
+✅ Visibilidad en tiempo real del ratio guardado SD / éxito HTTP
 ✅ Todas las constantes son ajustables para pruebas de campo
 
 ## Uso
@@ -230,7 +238,7 @@ git push
 
 ### Branch actual
 - **main:** Versión estable v0.3.9
-- **feature/robust-http-transmission:** Mejoras de robustez HTTP (v0.4.0)
+- **feature/robust-http-transmission:** Mejoras de robustez HTTP + contador SD (v0.3.9.2)
 
 ## Troubleshooting
 
@@ -265,5 +273,5 @@ Creative Commons 4.0
 
 ---
 
-**Versión:** 0.4.0 (feature/robust-http-transmission)
+**Versión:** 0.3.9.2 (feature/robust-http-transmission)
 **Última actualización:** Octubre 2025
