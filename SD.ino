@@ -14,10 +14,15 @@ String generateCSVFileName() {
 
 void writeCSVHeader() {
   if (!SDOK) return;
-  File f = SD.open(csvFileName, FILE_WRITE);
+  File f = SD.open(csvFileName, FILE_APPEND);
   if (f) {
-    f.println("ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht31TempC,sht31Hum,resetReason");
+    if (f.size() == 0) { // Only write header if file is empty
+        f.println("ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht31TempC,sht31Hum,resetReason");
+        Serial.println("[SD] Wrote header to " + csvFileName);
+    }
     f.close();
+  } else {
+    Serial.println("[SD][ERR] Failed to open " + csvFileName + " to write header.");
   }
 }
 
@@ -31,6 +36,9 @@ void writeErrorLogHeader() {
     Serial.println("[SD] Error log header created");
   }
 }
+
+// Variable global para almacenar la última línea guardada (para visualización en OLED)
+extern String lastSavedCSVLine;
 
 bool saveCSVData() {
   if (!SDOK || !loggingEnabled) return false;
@@ -54,15 +62,19 @@ bool saveCSVData() {
   String sht31Temp = (SHT31OK && !isnan(tempsht31)) ? String(tempsht31, 2) : "0";
   String sht31Humidity = (SHT31OK && !isnan(humsht31)) ? String(humsht31, 2) : "0";
   String line = String(millis()) + "," + hhmmss + "," + gpsDate + "," + gpsLat + "," + gpsLon + "," + gpsAlt + "," + gpsSpeedKmh + "," + String(PM1) + "," + String(PM25) + "," + String(PM10) + "," + (isnan(pmsTempC) ? "0" : String(pmsTempC, 1)) + "," + (isnan(pmsHum) ? "0" : String(pmsHum, 1)) + "," + String(rtcTempC, 2) + "," + String(batV, 2) + "," + String(csq) + "," + satellitesStr + "," + hdopStr + "," + (xtraLastOk ? "1" : "0") + "," + sht31Temp + "," + sht31Humidity + "," + rebootReason;
+
   File f = SD.open(csvFileName, FILE_APPEND);
   if (f) {
     f.println(line);
     f.close();
     sdSaveCounter++;  // Incrementar contador de guardados exitosos en SD
+    lastSavedCSVLine = line;  // Guardar línea para visualización en OLED
     Serial.println(String("[SD] Saved line: ") + line);
     return true;
+  } else {
+    Serial.println("[SD][ERR] Failed to open " + csvFileName + " for appending.");
+    return false;
   }
-  return false;
 }
 
 // -------------------- Failed Transmission Log (Debug only) --------------------
