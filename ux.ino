@@ -76,11 +76,16 @@ void drawHeader() {
   }
 
   // WiFi/Signal icon
-  u8g2.setFont(u8g2_font_open_iconic_all_1x_t);
-  u8g2.drawGlyph(90, 9, 0x00FD);  // wifi
-  u8g2.setFont(u8g2_font_5x7_tf);
-  u8g2.setCursor(98, 9);
-  u8g2.print(csq);
+  if (networkError) {
+    u8g2.setFont(u8g2_font_open_iconic_all_1x_t);
+    u8g2.drawGlyph(90, 9, 0x0118);  // Error icon at signal location
+  } else {
+    u8g2.setFont(u8g2_font_open_iconic_all_1x_t);
+    u8g2.drawGlyph(90, 9, 0x00FD);  // wifi
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.setCursor(98, 9);
+    u8g2.print(csq);
+  }
 
   // Battery
   drawBatteryDynamic(115, 3, batV);

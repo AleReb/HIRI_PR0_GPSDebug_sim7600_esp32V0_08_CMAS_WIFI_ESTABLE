@@ -235,6 +235,7 @@ static bool ttffPrinted = false;  // para imprimir TTFF una sola vez
 
 // -------------------- Signal / battery --------------------
 int csq = 0;
+bool networkError = false;
 float batV = 0.0f;
 const int NUM_SAMPLES = 30;
 const float alpha = 0.8;  // 0.5~0.2 = respuesta rápida, 0.05 = suave, 0.01 = muy lento
@@ -499,7 +500,11 @@ void updateNetworkInfo() {
 // -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
-  delay(50);
+
+  pixels.begin();
+  pixels.setPixelColor(0, pixels.Color(0, 50, 100));
+  pixels.show();
+
   Serial.println();
 
   // Check reboot reason
@@ -912,6 +917,7 @@ void loop() {
   if (FirstLoop == true) {
     Serial.println("[FIRST LOOP RTC]");
     csq = modem.getSignalQuality();
+    networkError = (csq == 99);
 
     // Log reboot reason if was watchdog or panic
     if (!rebootReasonLogged && SDOK) {
@@ -1094,7 +1100,8 @@ void loop() {
   // Leer temperatura del RTC sin re-inicializar el chip cada ciclo
   if (rtcOK) rtcTempC = rtc.getTemperature();
   else rtcTempC = NAN;
-
+    // PMS + LED color (non-blocking)
+    readPMS();
   // Drain UART / AT; también parsea NMEA (rate-limited to 20 Hz)
   static uint32_t lastAtTick = 0;
   if (millis() - lastAtTick >= 50) {  // Max 20 Hz (every 50ms)
@@ -1105,8 +1112,7 @@ void loop() {
 
   if (millis() - lastPmsPrint > PrintTime) {
     lastPmsPrint = millis();
-    // PMS + LED color (non-blocking)
-    readPMS();
+
     updatePmLed((float)PM25);
     Serial.printf("[PMS] PM1=%u PM2.5=%u PM10=%u  T(PMS)=%.1f  RH(PMS)=%.1f  (RTC T=%.2fC)\n",
                   PM1, PM25, PM10, pmsTempC, pmsHum, rtcTempC);
@@ -1169,6 +1175,7 @@ void loop() {
   if (millis() - lastCsqCheck > csqInterval) {
     lastCsqCheck = millis();
     csq = modem.getSignalQuality();
+    networkError = (csq == 99);
   }
 
   // -------- Periodic streaming to API --------
