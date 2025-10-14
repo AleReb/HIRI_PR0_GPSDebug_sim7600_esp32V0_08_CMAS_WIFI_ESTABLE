@@ -18,7 +18,7 @@
 #include <Preferences.h>
 
 // -------------------- VERSION --------------------
-String VERSION = "0.3.9.5";  // HTTP robustness + SD save counter display+config
+String VERSION = "0.3.9.6";  // HTTP robustness + SD save counter display+config
 
 #define TINY_GSM_MODEM_SIM7600
 #define TINY_GSM_RX_BUFFER 4096  // Increased from 2048 for better stability
@@ -168,7 +168,7 @@ const char gprsPass[] = "";
 
 // -------------------- Streaming --------------------
 const uint32_t STREAM_PERIOD_MS = 3000;  // HTTP transmission every 3s
-const uint32_t SD_SAVE_PERIOD_MS = 2000;  // SD logging every 2s (aligned with GPS rate)
+const uint32_t SD_SAVE_PERIOD_MS = 3000;  // SD logging every 3s (aligned with GPS rate)
 bool streaming = false;
 uint32_t lastStream = 0;
 uint32_t lastSdSave = 0;
@@ -177,7 +177,7 @@ bool wasStreamingBeforeBoot = false;  // Track if was streaming before reboot (f
 
 
 // SD save feedback
-const uint32_t SD_SAVE_DISPLAY_MS = 700;  // Mostrar datos guardados por 0.7 segundos
+const uint32_t SD_SAVE_DISPLAY_MS = 500;  // Mostrar datos guardados por 0.5 segundos
 String lastSavedCSVLine = "";  // Línea CSV completa guardada en SD
 
 // ==================== Display State Machine ====================
@@ -254,8 +254,8 @@ const uint32_t BAT_SAMPLE_INTERVAL_MS = 5;  // Tomar 1 muestra cada 5ms
 // -------------------- Measurements API (real endpoint) --------------------
 const char* API_BASE = "http://api-sensores.cmasccp.cl/insertarMedicion";
 // Must match backend exactly:
-const char* IDS_SENSORES = "401,401,401,401,401,402,402,402,402,402,403,404,405,405,405,405,405";  //sensor 1
-//const char* IDS_SENSORES = "406,406,406,406,406,407,407,407,407,407,408,409,410,410,410,410,410";  //sensor 2
+//const char* IDS_SENSORES = "401,401,401,401,401,402,402,402,402,402,403,404,405,405,405,405,405";  //sensor 1
+const char* IDS_SENSORES = "406,406,406,406,406,407,407,407,407,407,408,409,410,410,410,410,410";  //sensor 2
 //const char* IDS_SENSORES = "415,415,415,415,415,416,416,416,416,416,417,418,419,419,419,419,419,420,420";  //sensor 3
 //
 // &idsVariables=3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,3,6&valores= Grados celcius415),Humedad (415),Material particulado PM 1.0 (415), Material particulado PM 2.5 ,Material particulado PM 10 (415),Latitud ,Longitud ,Intensidad señal telefónica Adimensional ,Velocidad_km/h, Satelites int ,Grados celcius °C ,Voltaje V(418),Latitud °(419),Longitud °(419),ID String(419),Numero de envios Numeral(419),Registro SD Bool(419),Grados celcius °C(420),Humedad %(420)          
@@ -265,7 +265,7 @@ const char* IDS_VARIABLESSHT31 = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,3,
  String valores;
  String url;
 // ID string for variable
-const char* DEVICE_ID_STR = "01";  //
+const char* DEVICE_ID_STR = "02";  //
 static uint32_t sendCounter = 0;      // Transmisiones HTTP exitosas
 static uint32_t sdSaveCounter = 0;    // Total de guardados en SD (intentos)
 
@@ -1176,6 +1176,8 @@ void loop() {
   if (streaming && (millis() - lastStream >= config.httpSendPeriod)) {
     lastStream = millis();
     lastOledActivity = millis();  // Reset OLED timer on transmission activity
+
+    readPMS(); // Read sensor just before using its data
 
     // =====================================================
     // PRIORIDAD 1: GUARDAR EN SD PRIMERO (antes de HTTP)
