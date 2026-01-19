@@ -148,24 +148,45 @@ void parseNMEA(const String& line) {
 }
 
 // -------------------- GNSS bring-up functions --------------------
-// Intentar "todas" las constelaciones con fallback por firmware
+// Intentar configurar el modo GNSS según config, con fallback automático
 bool setGnssAllWithFallback() {
-  // Preferencia: 15 (GPS+GLONASS+GALILEO+BEIDOU [+QZSS])
-  // luego 7 (GPS+GLONASS+BEIDOU), 3 (GPS+GLONASS), 5 (GPS+BEIDOU), 1 (GPS)
-  const char* tries[] = {
-    "+CGNSSMODE=15,1",
-    "+CGNSSMODE=7,1",
-    "+CGNSSMODE=3,1",
-    "+CGNSSMODE=5,1",
-    "+CGNSSMODE=1,1"
+  // Intentar primero el modo configurado por el usuario
+  char cmd[20];
+  snprintf(cmd, sizeof(cmd), "+CGNSSMODE=%u,1", config.gnssMode);
+
+  if (atRun(cmd, "OK", "ERROR", 2000)) {
+    Serial.print("[GNSS] Mode set: ");
+    Serial.print(config.gnssMode);
+    switch(config.gnssMode) {
+      case 1:  Serial.println(" (GPS only)"); break;
+      case 3:  Serial.println(" (GPS + GLONASS)"); break;
+      case 5:  Serial.println(" (GPS + BEIDOU)"); break;
+      case 7:  Serial.println(" (GPS + GLONASS + BEIDOU)"); break;
+      case 15: Serial.println(" (ALL: GPS + GLONASS + GALILEO + BEIDOU)"); break;
+      default: Serial.println(" (Unknown)"); break;
+    }
+    return true;
+  }
+
+  // Si falla el modo configurado, intentar fallback con modos más simples
+  Serial.print("[GNSS] Configured mode ");
+  Serial.print(config.gnssMode);
+  Serial.println(" failed, trying fallback...");
+
+  const char* fallbackTries[] = {
+    "+CGNSSMODE=7,1",   // GPS+GLONASS+BEIDOU
+    "+CGNSSMODE=3,1",   // GPS+GLONASS
+    "+CGNSSMODE=1,1"    // GPS only
   };
-  for (size_t i = 0; i < sizeof(tries) / sizeof(tries[0]); ++i) {
-    if (atRun(tries[i], "OK", "ERROR", 2000)) {
-      Serial.print("[GNSS] Mode set: ");
-      Serial.println(tries[i]);
+
+  for (size_t i = 0; i < sizeof(fallbackTries) / sizeof(fallbackTries[0]); ++i) {
+    if (atRun(fallbackTries[i], "OK", "ERROR", 2000)) {
+      Serial.print("[GNSS] Fallback mode set: ");
+      Serial.println(fallbackTries[i]);
       return true;
     }
   }
+
   Serial.println("[GNSS] All attempts to set constellation FAILED");
   return false;
 }

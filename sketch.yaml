@@ -18,4 +18,4 @@ profiles:
       bits: "8"
       parity: none
       stop_bits: "1"
-    port: COM4
+    port: COM8

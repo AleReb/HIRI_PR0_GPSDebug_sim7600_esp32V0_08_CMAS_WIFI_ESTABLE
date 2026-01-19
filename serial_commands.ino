@@ -32,6 +32,7 @@ void processSerialCommand() {
     Serial.println(F("  sdinfo      - Show SD card info"));
     Serial.println(F("  sdlist      - List files on SD"));
     Serial.println(F("  sdnew       - Create new CSV file"));
+    Serial.println(F("  sdclear     - Delete all files on SD (WARNING: irreversible!)"));
 
     Serial.println(F("\n[Network/Modem]"));
     Serial.println(F("  netinfo     - Show network info"));
@@ -59,7 +60,8 @@ void processSerialCommand() {
     Serial.println(F("  set ledbright 10/25/50/100 - LED brightness (%)"));
     Serial.println(F("  set autostart on/off - Autostart streaming on boot"));
     Serial.println(F("  set autowaitgps on/off - Wait GPS fix before start"));
-    Serial.println(F("  set autogpsto 60-600 - GPS timeout (60s-10min, default: 300s)"));
+    Serial.println(F("  set autogpsto 60-900 - GPS timeout (60s-15min, default: 600s)"));
+    Serial.println(F("  set gnssmode 1/3/5/7/15 - GNSS mode (1=GPS, 3=GPS+GLO, 15=ALL)"));
     Serial.println(F("  configreset         - Reset to defaults"));
     Serial.println(F("  configsave          - Save config to flash"));
 
@@ -205,6 +207,23 @@ void processSerialCommand() {
     prefs.begin("system", false);
     prefs.putString("csvFile", csvFileName);
     prefs.end();
+  }
+
+  else if (cmd == "sdclear") {
+    if (!SDOK) {
+      Serial.println("[SD] Not available");
+      return;
+    }
+    Serial.println("[SD] ⚠ WARNING: This will delete ALL files on the SD card!");
+    Serial.println("[SD] Type 'sdclear confirm' to proceed");
+  }
+
+  else if (cmd == "sdclear confirm") {
+    if (!SDOK) {
+      Serial.println("[SD] Not available");
+      return;
+    }
+    clearSDCard();
   }
 
   // -------------------- NETWORK COMMANDS --------------------
@@ -477,12 +496,34 @@ void processSerialCommand() {
     // Autostart GPS timeout
     else if (param.startsWith("autogpsto ")) {
       int val = param.substring(10).toInt();
-      if (val >= 60 && val <= 600) {
+      if (val >= 60 && val <= 900) {
         config.autostartGpsTimeout = val;
         saveConfig();
         Serial.printf("[CONFIG] Autostart GPS timeout: %u seconds (%u min)\n", val, val / 60);
       } else {
-        Serial.println("[CONFIG] ✗ Invalid timeout (must be 60-600 seconds / 1-10 min)");
+        Serial.println("[CONFIG] ✗ Invalid timeout (must be 60-900 seconds / 1-15 min)");
+      }
+    }
+
+    // GNSS mode
+    else if (param.startsWith("gnssmode ")) {
+      int val = param.substring(9).toInt();
+      if (val == 1 || val == 3 || val == 5 || val == 7 || val == 15) {
+        config.gnssMode = val;
+        saveConfig();
+        Serial.print("[CONFIG] GNSS mode: ");
+        Serial.print(val);
+        Serial.print(" ");
+        switch(val) {
+          case 1:  Serial.println("(GPS only)"); break;
+          case 3:  Serial.println("(GPS + GLONASS)"); break;
+          case 5:  Serial.println("(GPS + BEIDOU)"); break;
+          case 7:  Serial.println("(GPS + GLONASS + BEIDOU)"); break;
+          case 15: Serial.println("(ALL: GPS + GLONASS + GALILEO + BEIDOU)"); break;
+        }
+        Serial.println("[CONFIG] ⚠ Reboot required for GNSS mode change to take effect");
+      } else {
+        Serial.println("[CONFIG] ✗ Invalid mode (valid: 1, 3, 5, 7, 15)");
       }
     }
 

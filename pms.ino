@@ -92,3 +92,30 @@ void updatePmLed(float pm25) {
   pixels.setPixelColor(0, pixels.Color(r, g, b));
   pixels.show();
 }
+//-------------------------SDS198 non-blocking parser (usando Serial2 UART2)-------------------------
+// Función para leer una trama de datos del sensor.
+bool readFrameSDS198(byte* buf) {
+  // Sincroniza con la cabecera de la trama.
+  int b;
+  while ((b = Serial2.read()) != -1) {
+    if ((byte)b == HEADER) {
+      buf[0] = HEADER;
+      break;
+    }
+  }
+  if (b == -1) return false; // No se encontró la cabecera.
+
+  // Lee los 9 bytes restantes de la trama.
+  if (Serial2.readBytes(buf + 1, 9) != 9) return false;
+
+  // Verifica el byte de comando y la cola de la trama.
+  if (buf[1] != CMD || buf[9] != TAIL) return false;
+
+  // Calcula el checksum sumando los bytes de datos (DATA1 a DATA6).
+  byte sum = 0;
+  for (int i = 2; i <= 7; i++) {
+    sum += buf[i];
+  }
+  // Compara el checksum calculado con el recibido.
+  return (sum == buf[8]);
+}

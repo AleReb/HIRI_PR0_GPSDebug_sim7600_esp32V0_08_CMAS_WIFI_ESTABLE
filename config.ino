@@ -26,7 +26,10 @@ void loadConfig() {
   // Autostart
   config.autostart = prefs.getBool("autoStart", false);
   config.autostartWaitGps = prefs.getBool("autoGPS", false);
-  config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 300);
+  config.autostartGpsTimeout = prefs.getUShort("autoGPSTO", 600);
+
+  // GNSS Mode
+  config.gnssMode = prefs.getUChar("gnssMode", 15);
 
   prefs.end();
 
@@ -43,6 +46,7 @@ void loadConfig() {
                 config.autostart ? "YES" : "NO",
                 config.autostartWaitGps ? "YES" : "NO",
                 config.autostartGpsTimeout);
+  Serial.printf("[CONFIG] GNSS mode: %u\n", config.gnssMode);
 }
 
 // -------------------- Save Configuration --------------------
@@ -70,6 +74,9 @@ void saveConfig() {
   prefs.putBool("autoGPS", config.autostartWaitGps);
   prefs.putUShort("autoGPSTO", config.autostartGpsTimeout);
 
+  // GNSS Mode
+  prefs.putUChar("gnssMode", config.gnssMode);
+
   prefs.end();
 
   Serial.println("[CONFIG] Saved to flash");
@@ -91,7 +98,9 @@ void configSetDefaults() {
 
   config.autostart = false;           // NO autostart
   config.autostartWaitGps = false;    // NO esperar GPS
-  config.autostartGpsTimeout = 300;   // 5 minutos (default)
+  config.autostartGpsTimeout = 600;   // 10 minutos (default)
+
+  config.gnssMode = 15;               // Todas las constelaciones (default)
 
   Serial.println("[CONFIG] Reset to defaults");
 }
@@ -124,6 +133,17 @@ void printConfig() {
   Serial.printf("  Wait for GPS fix:   %s\n", config.autostartWaitGps ? "YES" : "NO");
   Serial.printf("  GPS timeout:        %u seconds (%u min)\n",
                 config.autostartGpsTimeout, config.autostartGpsTimeout / 60);
+
+  Serial.println("\n[GNSS Configuration]");
+  Serial.printf("  Mode:               %u ", config.gnssMode);
+  switch(config.gnssMode) {
+    case 1:  Serial.println("(GPS only)"); break;
+    case 3:  Serial.println("(GPS + GLONASS)"); break;
+    case 5:  Serial.println("(GPS + BEIDOU)"); break;
+    case 7:  Serial.println("(GPS + GLONASS + BEIDOU)"); break;
+    case 15: Serial.println("(ALL: GPS + GLONASS + GALILEO + BEIDOU)"); break;
+    default: Serial.println("(Unknown)"); break;
+  }
 
   Serial.println();
 }
@@ -184,4 +204,63 @@ void applyLEDConfig() {
     pixels.setBrightness(brightness);
     Serial.printf("[LED] Brightness set to %u%% (%u/255)\n", config.ledBrightness, brightness);
   }
+}
+
+// -------------------- Clear SD Card --------------------
+void clearSDCard() {
+  if (!SDOK) {
+    Serial.println("[SD] Not mounted - cannot clear");
+    return;
+  }
+
+  Serial.println("[SD] Starting to delete all files...");
+  File root = SD.open("/");
+  if (!root) {
+    Serial.println("[SD] Cannot open root directory");
+    return;
+  }
+
+  int deletedCount = 0;
+  int failedCount = 0;
+
+  // First pass: collect all filenames
+  String fileNames[50];  // Max 50 files
+  int fileCount = 0;
+
+  File file = root.openNextFile();
+  while (file && fileCount < 50) {
+    if (!file.isDirectory()) {
+      fileNames[fileCount++] = String("/") + String(file.name());
+    }
+    file.close();
+    file = root.openNextFile();
+  }
+  root.close();
+
+  // Second pass: delete all collected files
+  for (int i = 0; i < fileCount; i++) {
+    Serial.print("[SD] Deleting: ");
+    Serial.print(fileNames[i]);
+
+    if (SD.remove(fileNames[i].c_str())) {
+      Serial.println(" - OK");
+      deletedCount++;
+    } else {
+      Serial.println(" - FAILED");
+      failedCount++;
+    }
+  }
+
+  Serial.println("[SD] Clear complete:");
+  Serial.printf("  Deleted: %d files\n", deletedCount);
+  if (failedCount > 0) {
+    Serial.printf("  Failed:  %d files\n", failedCount);
+  }
+
+  // Reset CSV filename in preferences since all files were deleted
+  csvFileName = "";
+  prefs.begin("system", false);
+  prefs.putString("csvFile", "");
+  prefs.end();
+  Serial.println("[SD] CSV filename cleared from memory");
 }

@@ -17,7 +17,7 @@ void writeCSVHeader() {
   File f = SD.open(csvFileName, FILE_APPEND);
   if (f) {
     if (f.size() == 0) { // Only write header if file is empty
-        f.println("ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht31TempC,sht31Hum,resetReason");
+        f.println("ts_ms,time,gpsDate,lat,lon,alt,spd_kmh,pm1,pm25,pm10,pmsTempC,pmsHum,rtcTempC,batV,csq,sats,hdop,xtra_ok,sht31TempC,sht31Hum,resetReason,pm100");
         Serial.println("[SD] Wrote header to " + csvFileName);
     }
     f.close();
@@ -61,7 +61,7 @@ bool saveCSVData() {
   snprintf(hhmmss, sizeof(hhmmss), "%02d:%02d:%02d", now.hour(), now.minute(), now.second());
   String sht31Temp = (SHT31OK && !isnan(tempsht31)) ? String(tempsht31, 2) : "0";
   String sht31Humidity = (SHT31OK && !isnan(humsht31)) ? String(humsht31, 2) : "0";
-  String line = String(millis()) + "," + hhmmss + "," + gpsDate + "," + gpsLat + "," + gpsLon + "," + gpsAlt + "," + gpsSpeedKmh + "," + String(PM1) + "," + String(PM25) + "," + String(PM10) + "," + (isnan(pmsTempC) ? "0" : String(pmsTempC, 1)) + "," + (isnan(pmsHum) ? "0" : String(pmsHum, 1)) + "," + String(rtcTempC, 2) + "," + String(batV, 2) + "," + String(csq) + "," + satellitesStr + "," + hdopStr + "," + (xtraLastOk ? "1" : "0") + "," + sht31Temp + "," + sht31Humidity + "," + rebootReason;
+  String line = String(millis()) + "," + hhmmss + "," + gpsDate + "," + gpsLat + "," + gpsLon + "," + gpsAlt + "," + gpsSpeedKmh + "," + String(PM1) + "," + String(PM25) + "," + String(PM10) + "," + (isnan(pmsTempC) ? "0" : String(pmsTempC, 1)) + "," + (isnan(pmsHum) ? "0" : String(pmsHum, 1)) + "," + String(rtcTempC, 2) + "," + String(batV, 2) + "," + String(csq) + "," + satellitesStr + "," + hdopStr + "," + (xtraLastOk ? "1" : "0") + "," + sht31Temp + "," + sht31Humidity + "," + rebootReason + "," + String(SDS198PM100);
 
   File f = SD.open(csvFileName, FILE_APPEND);
   if (f) {

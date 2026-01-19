@@ -11,6 +11,7 @@
  * - HTTP: Async state machine (non-blocking transmission)
  * - Battery: Non-blocking EMA filter sampling
  * Author: Alejandro Rebolledo | License: Creative Comons 4.0
+ * se esta agregando un sensor para probar SDS198
  */
 
 #include <Arduino.h>
@@ -18,7 +19,7 @@
 #include <Preferences.h>
 
 // -------------------- VERSION --------------------
-String VERSION = "0.3.9.6";  // HTTP robustness + SD save counter display+config
+String VERSION = "0.3.9.8";  // HTTP robustness + SD save counter display+config, test mosfet en pin 33/al parecer que no funciono
 
 #define TINY_GSM_MODEM_SIM7600
 #define TINY_GSM_RX_BUFFER 4096  // Increased from 2048 for better stability
@@ -36,6 +37,9 @@ String VERSION = "0.3.9.6";  // HTTP robustness + SD save counter display+config
 // PMS pins (keep your wiring)
 #define pms_TX 5
 #define pms_RX 18
+// Define los pines para la comunicación serie por software.
+#define SDS198RX_PIN 39 // Pin RX del ESP32 conectado al TX del sensor.
+#define SDS198TX_PIN 0  // Pin TX del ESP32 (no se usa para recibir datos del sensor).
 
 #define BAT_PIN 35
 #define NEOPIX_PIN 12
@@ -43,18 +47,27 @@ String VERSION = "0.3.9.6";  // HTTP robustness + SD save counter display+config
 
 #define BUTTON_PIN_1 19  // STOP
 #define BUTTON_PIN_2 23  // START
-
+// POWER PIN
+#define POWER_PIN 33 // este pin es el libre 
 // -------------------- OLED --------------------
 #include <Wire.h>
 #include <U8g2lib.h>
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/U8X8_PIN_NONE);
 
-// -------------------- PMS --------------------
+// -------------------- PMS y SDS198 --------------------
 #include <SoftwareSerial.h>
-SoftwareSerial pms(pms_TX, pms_RX);  // (RX, TX)
+SoftwareSerial pms(pms_TX, pms_RX);  // (RX, TX) //Plantower PMS5003
 uint16_t PM1 = 0, PM25 = 0, PM10 = 0;
 float pmsTempC = 0, pmsHum = 0;  // PMS temperature and RH (if sensor variant supports it)
 
+// Crea una instancia de SoftwareSerial para la comunicación con el sensor. SDS198
+//SoftwareSerial sdsSerial(SDS198RX_PIN, SDS198TX_PIN); // RX, TX SDS198 se usa solo rx y a demas se implementa hardware serial2
+#define sdsSerial Serial2
+// Define los bytes de la trama de datos del sensor.
+const byte HEADER = 0xAA; // Cabecera de la trama.
+const byte CMD    = 0xCF; // Byte de comando.
+const byte TAIL   = 0xAB; // Cola de la trama.
+int SDS198PM100; //variable global para guardar el valor de PM100 del SDS198
 // ring buffer
 static uint8_t pmsBuf[64];
 static size_t pmsHead = 0;
@@ -120,9 +133,9 @@ SPIClass spiSD(HSPI);
 bool SDOK = false;
 bool loggingEnabled = false;
 String csvFileName = "";
-String logFilePath = "";  // Error log file (will be initialized with device ID in setup)
-String failedTxPath = "";  // Failed transmissions log (will be initialized with device ID in setup)
-String deviceID = "/HIRIP";  // nombre base de archivo (legacy, no se usa)
+String logFilePath = "";           // Error log file (will be initialized with device ID in setup)
+String failedTxPath = "";          // Failed transmissions log (will be initialized with device ID in setup)
+String deviceID = "/HIRIP";        // nombre base de archivo (legacy, no se usa)
 static uint8_t lastDayLogged = 0;  // Para detectar cambio de día
 const int SD_SCLK = 14, SD_MISO = 2, SD_MOSI = 15, SD_CS = 13;
 
@@ -167,7 +180,7 @@ const char gprsUser[] = "";
 const char gprsPass[] = "";
 
 // -------------------- Streaming --------------------
-const uint32_t STREAM_PERIOD_MS = 3000;  // HTTP transmission every 3s
+const uint32_t STREAM_PERIOD_MS = 3000;   // HTTP transmission every 3s
 const uint32_t SD_SAVE_PERIOD_MS = 3000;  // SD logging every 3s (aligned with GPS rate)
 bool streaming = false;
 uint32_t lastStream = 0;
@@ -177,8 +190,8 @@ bool wasStreamingBeforeBoot = false;  // Track if was streaming before reboot (f
 
 
 // SD save feedback
-const uint32_t SD_SAVE_DISPLAY_MS = 500;  // Mostrar datos guardados por 0.5 segundos
-String lastSavedCSVLine = "";  // Línea CSV completa guardada en SD
+const uint32_t SD_SAVE_DISPLAY_MS = 200;  // Mostrar datos guardados por 0.2 segundos
+String lastSavedCSVLine = "";             // Línea CSV completa guardada en SD
 
 // ==================== Display State Machine ====================
 enum DisplayState {
@@ -242,9 +255,9 @@ const float alpha = 0.8;  // 0.5~0.2 = respuesta rápida, 0.05 = suave, 0.01 = m
 float batteryVoltageAverage = 0;
 bool hasRed = false;
 // CSQ timing (simple flag-based approach)
-const uint32_t CSQ_INTERVAL_NORMAL_MS = 60000 * 20;  // 20 minutos normal
+const uint32_t CSQ_INTERVAL_NORMAL_MS = 60000 * 20;        // 20 minutos normal
 const uint32_t CSQ_INTERVAL_TRANSMITTING_MS = 60000 * 60;  // 1 hora durante transmisión
-bool isCurrentlyTransmitting = false;  // Bandera simple
+bool isCurrentlyTransmitting = false;                      // Bandera simple
 
 // Variables para muestreo no bloqueante de batería
 static uint32_t lastBatSample = 0;
@@ -256,19 +269,26 @@ const uint32_t BAT_SAMPLE_INTERVAL_MS = 5;  // Tomar 1 muestra cada 5ms
 const char* API_BASE = "http://api-sensores.cmasccp.cl/insertarMedicion";
 // Must match backend exactly:
 //const char* IDS_SENSORES = "401,401,401,401,401,402,402,402,402,402,403,404,405,405,405,405,405";  //sensor 1
-const char* IDS_SENSORES = "406,406,406,406,406,407,407,407,407,407,408,409,410,410,410,410,410";  //sensor 2
-//const char* IDS_SENSORES = "415,415,415,415,415,416,416,416,416,416,417,418,419,419,419,419,419,420,420";  //sensor 3
-//
-// &idsVariables=3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,3,6&valores= Grados celcius415),Humedad (415),Material particulado PM 1.0 (415), Material particulado PM 2.5 ,Material particulado PM 10 (415),Latitud ,Longitud ,Intensidad señal telefónica Adimensional ,Velocidad_km/h, Satelites int ,Grados celcius °C ,Voltaje V(418),Latitud °(419),Longitud °(419),ID String(419),Numero de envios Numeral(419),Registro SD Bool(419),Grados celcius °C(420),Humedad %(420)          
-const char* IDS_VARIABLES = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44";  //los mismos datos pero caria el ID-sensor cambia el numero de sensores
+//const char* IDS_SENSORES = "406,406,406,406,406,407,407,407,407,407,408,409,410,410,410,410,410";  //sensor 2
+//const char* IDS_SENSORES = "415,415,415,415,415,416,416,416,416,416,417,418,419,419,419,419,419,420,420";  //sensor 3 //tiene sht31
+//const char* IDS_SENSORES = "448,448,448,448,448,449,449,449,449,449,450,451,452,452,452,452,452,453,453";  //sensor 4   // tiene sds198 
+//const char* IDS_SENSORES = "454,454,454,454,454,455,455,455,455,455,456,457,458,458,458,458,458,459,459";  //sensor 5   // tiene sds198 
+//const char* IDS_SENSORES = "460,460,460,460,460,461,461,461,461,461,462,463,464,464,464,464,464,467";  //sensor 6   // tiene un sensor SDS198 
+//const char* IDS_SENSORES = "468,468,468,468,468,469,469,469,469,469,470,471,472,472,472,472,472";  //sensor 7
+//const char* IDS_SENSORES = "478,478,478,478,478,479,479,479,479,479,480,481,482,482,482,482,482,483,483";  //sensor 9 no usado
+const char* IDS_SENSORES = "484,484,484,484,484,485,485,485,485,485,486,487,488,488,488,488,488,489,489";  //sensor 10 no usado
+
+const char* IDS_VARIABLES = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44";           //los mismos datos pero cambia el ID-sensor cambia el numero de sensores
 const char* IDS_VARIABLESSHT31 = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,3,6";  //los mismos datos pero caria el ID-sensor cambia el numero de sensores
-// ur format helpers
- String valores;
- String url;
+const char* IDS_VARIABLES06 = "3,6,7,8,9,11,12,15,45,46,3,4,11,12,42,43,44,51";  //los mismos datos pero caria el ID-sensor cambia el numero de sensores
+                                                                                     // ur format helpers
+String valores;
+String url;
 // ID string for variable
-const char* DEVICE_ID_STR = "02";  //
-static uint32_t sendCounter = 0;      // Transmisiones HTTP exitosas
-static uint32_t sdSaveCounter = 0;    // Total de guardados en SD (intentos)
+const char* DEVICE_ID_STR = "10";   // el 06 gatilla accioes especiales como el sensor sds198
+// -------------------- Transmission counters --------------------
+static uint32_t sendCounter = 0;    // Transmisiones HTTP exitosas
+static uint32_t sdSaveCounter = 0;  // Total de guardados en SD (intentos)
 
 // -------------------- XTRA / AGNSS --------------------
 static const uint32_t XTRA_REFRESH_MS = 3UL * 24UL * 60UL * 60UL * 1000UL;  // 3 days
@@ -390,28 +410,28 @@ static uint32_t lastOledActivity = 0;  // Timer for OLED auto-off
 // -------------------- Configuration System --------------------
 struct SystemConfig {
   // SD Card
-  bool sdAutoMount;           // Montar SD en boot (default: false)
-  uint32_t sdSavePeriod;      // Período guardado SD en ms (default: 3000)
+  bool sdAutoMount;       // Montar SD en boot (default: false)
+  uint32_t sdSavePeriod;  // Período guardado SD en ms (default: 3000)
 
   // HTTP Transmission
-  uint32_t httpSendPeriod;    // Período transmisión en ms (default: 3000)
-  uint16_t httpTimeout;       // Timeout HTTP en segundos (default: 15)
+  uint32_t httpSendPeriod;  // Período transmisión en ms (default: 3000)
+  uint16_t httpTimeout;     // Timeout HTTP en segundos (default: 15)
 
   // Display OLED
-  bool oledAutoOff;           // Apagar OLED automáticamente (default: false)
-  uint32_t oledTimeout;       // Timeout en ms (default: 120000 = 2min)
+  bool oledAutoOff;      // Apagar OLED automáticamente (default: false)
+  uint32_t oledTimeout;  // Timeout en ms (default: 120000 = 2min)
 
   // Power Management
-  bool ledEnabled;            // NeoPixel habilitado (default: true)
-  uint8_t ledBrightness;      // Brillo LED: 10, 25, 50, 100 (default: 50%)
+  bool ledEnabled;        // NeoPixel habilitado (default: true)
+  uint8_t ledBrightness;  // Brillo LED: 10, 25, 50, 100 (default: 50%)
 
   // Autostart
-  bool autostart;             // Iniciar streaming/logging al encender (default: false)
-  bool autostartWaitGps;      // Esperar GPS fix antes de iniciar (default: false)
-  uint16_t autostartGpsTimeout; // Timeout GPS en segundos (default: 600 = 10min)
+  bool autostart;                // Iniciar streaming/logging al encender (default: false)
+  bool autostartWaitGps;         // Esperar GPS fix antes de iniciar (default: false)
+  uint16_t autostartGpsTimeout;  // Timeout GPS en segundos (default: 600 = 10min)
 
   // GNSS Mode
-  uint8_t gnssMode;           // Modo GNSS: 1=GPS, 3=GPS+GLO, 5=GPS+BDS, 7=GPS+GLO+BDS, 15=ALL (default: 15)
+  uint8_t gnssMode;  // Modo GNSS: 1=GPS, 3=GPS+GLO, 5=GPS+BDS, 7=GPS+GLO+BDS, 15=ALL (default: 15)
 };
 
 SystemConfig config;
@@ -444,7 +464,7 @@ GnssDbgState gnssDbgState = GNSS_DBG_IDLE;
 uint32_t gnssDbgNextAt = 0;
 
 
-void logError(const char *errorType, const String &errorCode, const String &rawResponse) {
+void logError(const char* errorType, const String& errorCode, const String& rawResponse) {
   if (!SDOK) return;
 
   DateTime now = rtc.now();
@@ -500,9 +520,10 @@ void updateNetworkInfo() {
 // -------------------- Setup --------------------
 void setup() {
   Serial.begin(115200);
-
+  pinMode(POWER_PIN, OUTPUT);
+  digitalWrite(POWER_PIN,HIGH);
   pixels.begin();
-  pixels.setPixelColor(0, pixels.Color(0, 50, 100));
+  pixels.setPixelColor(0, pixels.Color(0, 100, 50));
   pixels.show();
 
   Serial.println();
@@ -615,7 +636,6 @@ void setup() {
   // Initialize OLED activity timer
   lastOledActivity = millis();
 
-  pixels.begin();
   pixels.setPixelColor(0, pixels.Color(0, 50, 100));
   pixels.show();
 
@@ -645,10 +665,11 @@ void setup() {
   u8g2.setCursor(0, 55);
   u8g2.print("ID:" + String(DEVICE_ID_STR));
   u8g2.sendBuffer();
-  delay(1000);  // Mantener pantalla por 1 segundo
 
-  pms.begin(9600);
 
+  pms.begin(9600);//PMS5003 sensor plantower
+//  sdsSerial.begin(9600); //SDS198 sensor
+ sdsSerial.begin(9600, SERIAL_8N1, SDS198RX_PIN,-1); //SDS198 sensor hardware serial2
   pinMode(BUTTON_PIN_1, INPUT_PULLUP);
   pinMode(BUTTON_PIN_2, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN_1), isrBtn1, FALLING);
@@ -672,7 +693,7 @@ void setup() {
 
   // SD Status indicator (if auto-mount is enabled)
   if (config.sdAutoMount) {
-    u8g2.setCursor(60, 64);
+    u8g2.setCursor(45, 64);
     if (SDOK) {
       u8g2.print(" SD:OK");
     } else {
@@ -681,16 +702,20 @@ void setup() {
     u8g2.sendBuffer();
   }
 
-  delay(1000);  // Mantener status por 1 segundo
+
 
   Serial.println("SHT31 test");
   if (!sht31.begin(0x44)) {  // Set to 0x45 for alternate i2c addr
     Serial.println("Couldn't find SHT31");
     SHT31OK = false;
   } else {
+    //u8g2.setCursor(60, 64);
+    u8g2.print(" SHT31:OK");
     SHT31OK = true;
   }
 
+  u8g2.sendBuffer();
+  delay(2000);  // Mantener status por 1 segundo
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX, MODEM_TX);
   pinMode(MODEM_PWRKEY, OUTPUT);
   digitalWrite(MODEM_PWRKEY, HIGH);
@@ -705,16 +730,16 @@ void setup() {
   for (int i = 0; i < 3; i++) {
     while (!modem.testAT(5000)) {
       Serial.println("[MODEM] Pulse PWRKEY");
-        pixels.setPixelColor(0, pixels.Color(0, 50, 100));
-  pixels.show();
+      pixels.setPixelColor(0, pixels.Color(0, 50, 100));
+      pixels.show();
       digitalWrite(MODEM_PWRKEY, HIGH);
       delay(300);
       digitalWrite(MODEM_PWRKEY, LOW);
-        pixels.setPixelColor(0, pixels.Color(0, 0, 0));
-  pixels.show();
+      pixels.setPixelColor(0, pixels.Color(0, 0, 0));
+      pixels.show();
     }
   }
-    pixels.setPixelColor(0, pixels.Color(0, 50, 100));
+  pixels.setPixelColor(0, pixels.Color(0, 50, 100));
   pixels.show();
   Serial.println("[MODEM] OK");
   oledStatus("MODEM", "OK", "", "");
@@ -734,8 +759,8 @@ void setup() {
   }
 
   // RTC from network (opcional; no re-init en loop)
-  syncRtcSmart();
-  printRtcOnce();
+  //syncRtcSmart(); ///
+  //printRtcOnce();
 
   // XTRA enable + initial download (requiere PDP)
   xtraSupported = detectAndEnableXtra();
@@ -766,7 +791,7 @@ void setup() {
 void handleButtons() {
   // --- BTN1: toggle START/STOP ---
   if (btn1Flag) {
-    btn1Flag = false;  // consumir evento (ya quedó desarmado en la ISR)
+    btn1Flag = false;             // consumir evento (ya quedó desarmado en la ISR)
     lastOledActivity = millis();  // Reset OLED timer on button press
     if (config.oledAutoOff) {
       u8g2.setPowerSave(0);  // Wake up display if it was off
@@ -813,8 +838,8 @@ void handleButtons() {
       // Persist streaming state y resetear contadores en flash
       prefs.begin("system", false);
       prefs.putBool("streaming", true);
-      prefs.putUInt("sendCnt", 0);   // Guardar 0 en flash para inicio manual
-      prefs.putUInt("sdCnt", 0);     // Guardar 0 en flash para inicio manual
+      prefs.putUInt("sendCnt", 0);  // Guardar 0 en flash para inicio manual
+      prefs.putUInt("sdCnt", 0);    // Guardar 0 en flash para inicio manual
       prefs.end();
 
       Serial.println(String("[STREAM] START + SD logging ") + (loggingEnabled ? "ON" : "OFF"));
@@ -836,7 +861,7 @@ void handleButtons() {
 
   // --- BTN2: alterna WiFi AP ---
   if (btn2Flag) {
-    btn2Flag = false;  // consumir evento (ya quedó desarmado en la ISR)
+    btn2Flag = false;             // consumir evento (ya quedó desarmado en la ISR)
     lastOledActivity = millis();  // Reset OLED timer on button press
     if (config.oledAutoOff) {
       u8g2.setPowerSave(0);  // Wake up display if it was off
@@ -905,7 +930,7 @@ void loop() {
     u8g2.sendBuffer();
 
     yield();
-    return; // Exit loop early - skip all normal operation
+    return;  // Exit loop early - skip all normal operation
   }
 
   // ===== NORMAL MODE: GSM/GPS/Sensors operation =====
@@ -1100,8 +1125,20 @@ void loop() {
   // Leer temperatura del RTC sin re-inicializar el chip cada ciclo
   if (rtcOK) rtcTempC = rtc.getTemperature();
   else rtcTempC = NAN;
-    // PMS + LED color (non-blocking)
-    readPMS();
+  // PMS + LED color (non-blocking)
+  readPMS();
+  byte frame[10]; // Buffer para almacenar la trama de datos.
+  // Si se lee una trama válida...bool (); 
+  if (readFrameSDS198(frame)) {
+    // Extrae el valor de PM100 de la trama.
+    // El valor de PM100 se forma con los bytes 5 (MSB) y 4 (LSB) de la trama.
+    uint16_t pm100 = (uint16_t)((frame[5] << 8) | frame[4]); // en μg/m3
+    // Imprime el valor de PM100 en el monitor serie.
+    SDS198PM100=pm100;
+    Serial.print("PM100 (TSP): ");
+    Serial.print(SDS198PM100);
+    Serial.println(" ug/m3");
+  }
   // Drain UART / AT; también parsea NMEA (rate-limited to 20 Hz)
   static uint32_t lastAtTick = 0;
   if (millis() - lastAtTick >= 50) {  // Max 20 Hz (every 50ms)
@@ -1184,7 +1221,7 @@ void loop() {
     lastStream = millis();
     lastOledActivity = millis();  // Reset OLED timer on transmission activity
 
-    readPMS(); // Read sensor just before using its data
+    //readPMS();  // Read sensor just before using its data esto no era problema
 
     // =====================================================
     // PRIORIDAD 1: GUARDAR EN SD PRIMERO (antes de HTTP)
@@ -1203,34 +1240,37 @@ void loop() {
     }
 
     // valores mapping (v1 sin sanitizar, a pedido)
-    const String v1 = isnan(pmsTempC) ? "0" : safeFloatStr(pmsTempC);// Temp PMS (o 0/NaN según sensor)
-    const String v2 = isnan(pmsHum) ? "0" : safeFloatStr(pmsHum);  // RH PMS si válido
-    const String v3 = safeUIntStr(PM1);                            // PM1
-    const String v4 = safeUIntStr(PM25);                           // PM2.5
-    const String v5 = safeUIntStr(PM10);                           // PM10
-    const String v6 = safeGpsStr(gpsLat);                          // Lat
-    const String v7 = safeGpsStr(gpsLon);                          // Lon
-    const String v8 = safeIntStr(csq);                             // CSQ
-    const String v9 = (gpsSpeedKmh.length() ? gpsSpeedKmh : "0");  // Spd
-    const String v10 = safeSatsStr(satellitesStr);                 // Sats
-    const String v11 = safeFloatStr(rtcTempC);                     // RTC Temp
-    const String v12 = safeFloatStr(batV);                         // BatV
-    const String v13 = safeGpsStr(gpsLat);                         // Lat
-    const String v14 = safeGpsStr(gpsLon);                         // Lon
-    const String v15 = String(DEVICE_ID_STR);                      // ID
-    const String v16 = safeUIntStr(sendCounter + 1);               // Counter
-    const String v17 = loggingEnabled ? "1" : "0";                 // SD
-//
-if (SHT31OK == true) {
-    const String v18 = isnan(tempsht31) ? "0" : safeFloatStr(tempsht31);  // Temp SHT31 si válido
-    const String v19 = isnan(humsht31) ? "0" : safeFloatStr(humsht31);    // RH SHT31 si válido
-    valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17+ "," + v18 + "," + v19;
- url = String(API_BASE) + "?idsSensores=" + IDS_SENSORES + "&idsVariables=" + IDS_VARIABLESSHT31 + "&valores=" + valores;
-
-  } else {
-    valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17;
-  url = String(API_BASE) + "?idsSensores=" + IDS_SENSORES + "&idsVariables=" + IDS_VARIABLES + "&valores=" + valores;
-  }
+    const String v1 = isnan(pmsTempC) ? "0" : safeFloatStr(pmsTempC);  // Temp PMS (o 0/NaN según sensor)
+    const String v2 = isnan(pmsHum) ? "0" : safeFloatStr(pmsHum);      // RH PMS si válido
+    const String v3 = safeUIntStr(PM1);                                // PM1
+    const String v4 = safeUIntStr(PM25);                               // PM2.5
+    const String v5 = safeUIntStr(PM10);                               // PM10
+    const String v6 = safeGpsStr(gpsLat);                              // Lat
+    const String v7 = safeGpsStr(gpsLon);                              // Lon
+    const String v8 = safeIntStr(csq);                                 // CSQ
+    const String v9 = (gpsSpeedKmh.length() ? gpsSpeedKmh : "0");      // Spd
+    const String v10 = safeSatsStr(satellitesStr);                     // Sats
+    const String v11 = safeFloatStr(rtcTempC);                         // RTC Temp
+    const String v12 = safeFloatStr(batV);                             // BatV
+    const String v13 = safeGpsStr(gpsLat);                             // Lat
+    const String v14 = safeGpsStr(gpsLon);                             // Lon
+    const String v15 = String(DEVICE_ID_STR);                          // ID
+    const String v16 = safeUIntStr(sendCounter + 1);                   // Counter
+    const String v17 = loggingEnabled ? "1" : "0";                     // SD
+    if (SHT31OK == true) {
+      const String v18 = isnan(tempsht31) ? "0" : safeFloatStr(tempsht31);  // Temp SHT31 si válido
+      const String v19 = isnan(humsht31) ? "0" : safeFloatStr(humsht31);    // RH SHT31 si válido
+      valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17 + "," + v18 + "," + v19;
+      url = String(API_BASE) + "?idsSensores=" + IDS_SENSORES + "&idsVariables=" + IDS_VARIABLESSHT31 + "&valores=" + valores;
+    }else if (DEVICE_ID_STR == "06") {
+      Serial.println("Enviando datos SDS198 para dispositivo 06");
+      const String v18 = safeUIntStr(SDS198PM100);  // PM100 SDS198 si válido
+      valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17 + "," + v18;
+      url = String(API_BASE) + "?idsSensores=" + IDS_SENSORES + "&idsVariables=" + IDS_VARIABLES06 + "&valores=" + valores;
+    } else {
+      valores = v1 + "," + v2 + "," + v3 + "," + v4 + "," + v5 + "," + v6 + "," + v7 + "," + v8 + "," + v9 + "," + v10 + "," + v11 + "," + v12 + "," + v13 + "," + v14 + "," + v15 + "," + v16 + "," + v17;
+      url = String(API_BASE) + "?idsSensores=" + IDS_SENSORES + "&idsVariables=" + IDS_VARIABLES + "&valores=" + valores;
+    }
 
     // =====================================================
     // PRIORIDAD 2: TRANSMITIR POR HTTP (después de guardar SD)
@@ -1275,4 +1315,3 @@ if (SHT31OK == true) {
 
   yield();
 }
-

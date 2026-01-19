@@ -146,9 +146,12 @@ void displayNormal() {
   u8g2.setCursor(0, 48);
   if (SHT31OK == true) {
     u8g2.print("Ti:" + String(rtcTempC, 1) + " Tpm:" + String(pmsTempC, 1) + " Te:" + String(tempsht31));
+  } else if (DEVICE_ID_STR == "06") {
+    u8g2.print("Ti:" + String(rtcTempC, 1) + " Tpm:" + String(pmsTempC, 1) + " PM100:" + String(SDS198PM100));
   } else {
     u8g2.print("Ti:" + String(rtcTempC, 1) + " Tpm:" + String(pmsTempC, 1));
   }
+  
 
   u8g2.setCursor(0, 56);
   unsigned long totalSeconds = (unsigned long)(millis() / 1000UL);

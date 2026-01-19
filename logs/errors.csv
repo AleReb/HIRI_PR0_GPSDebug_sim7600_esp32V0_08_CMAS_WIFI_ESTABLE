@@ -1,0 +1,20 @@
+timestamp;errorType;errorCode;rawResponse;operator;technology;signalQuality;registrationStatus;batteryV;uptime_s
+13-10-2025 8:05;HTTP_TIMEOUT;HTTPACTION;Timeout=15001ms bat=4.19V;Movistar FloLive;LTE;22;Registered;4.19;2000
+13-10-2025 8:05;HTTP_INIT_FAIL;HTTPINIT;AT+HTTPINIT;;;;;;
+ERROR;;;;;;;;;
+;Movistar FloLive;LTE;22;Registered;4.19;2001;;;
+ERROR;;;;;;;;;
+;Movistar FloLive;LTE;22;Registered;4.22;2004;;;
+ERROR;;;;;;;;;
+;Movistar FloLive;LTE;22;Registered;4.24;2007;;;
+ERROR;;;;;;;;;
+;Movistar FloLive;LTE;22;Registered;4.10;2010;;;
+ERROR;;;;;;;;;
+;Movistar FloLive;LTE;22;Registered;4.08;2013;;;
+ERROR;;;;;;;;;
+;Movistar FloLive;LTE;22;Registered;4.07;2016;;;
+ERROR;;;;;;;;;
+;Movistar FloLive;LTE;22;Registered;4.07;2019;;;
+13-10-2025 8:51;HTTP_TIMEOUT;HTTPACTION;Timeout=15001ms bat=4.03V;Movistar FloLive;LTE;22;Registered;4.03;4743
+13-10-2025 8:53;HTTP_TIMEOUT;HTTPACTION;Timeout=15001ms bat=3.99V;Movistar FloLive;LTE;22;Registered;3.99;4891
+13-10-2025 8:56;REBOOT;TaskWatchdog;Device rebooted;N/A;N/A;0;N/A;0.00;103
